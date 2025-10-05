@@ -1257,23 +1257,31 @@ Be flexible in interpretation - users may not respond exactly as expected."""),
 
 # ========== RETRIEVAL NODES (UNCHANGED) ==========
 
+
 def retrieve_documents(state: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Retrieve documents from vector store.
-    Pattern: Dense retrieval with relevance scoring
+    OPTIMIZED: Retrieve documents from vector store.
+    
+    Changes:
+    1. Uses cached embedding service
+    2. Reuses connection pool
+    3. Proper error handling
     """
     logger.info("NODE: retrieve_documents")
-    
-    question = state.get("enriched_question", state["question"])  # FIXED: Use enriched if available
+    question = state.get("enriched_question", state["question"])
     session_id = state["session_id"]
     
     try:
+        # Get embedding service (cached globally)
         embedding_service = get_embedding_service()
+        
+        # Create vector store with pooled connection
         vector_store = VectorStoreService(
             url=settings.qdrant_url,
             api_key=settings.qdrant_api_key,
             collection_name=f"session_{session_id}",
-            embedding_dim=embedding_service.get_dimension()
+            embedding_dim=embedding_service.get_dimension(),
+            auto_create=False  # Don't create - should already exist
         )
         
         # Generate query embedding
@@ -1303,7 +1311,7 @@ def retrieve_documents(state: Dict[str, Any]) -> Dict[str, Any]:
             **state,
             "documents": documents
         }
-    
+        
     except Exception as e:
         logger.error(f"Document retrieval error: {e}")
         return {

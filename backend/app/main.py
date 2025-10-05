@@ -5,6 +5,8 @@ from typing import List, Optional, AsyncGenerator
 import uuid
 import json
 from io import BytesIO
+from functools import lru_cache
+
 
 from .config import settings
 from .models.schemas import ChatRequest, ChatResponse, UploadResponse, HealthResponse, Source
@@ -416,22 +418,42 @@ def execute_workflow_with_retry(workflow, initial_state):
 
 
 # Helper function for document availability check
+
+@lru_cache(maxsize=256)  # Cache results for same session_id
+def _get_embedding_dimension() -> int:
+    """Cache embedding dimension to avoid repeated calls."""
+    return get_embedding_service(settings.embedding_model).get_dimension()
+
+
 def check_document_availability(session_id: str) -> bool:
-    """Check if session has uploaded documents."""
+    """
+    OPTIMIZED: Check if session has uploaded documents.
+    
+    Changes:
+    1. Uses cached embedding dimension
+    2. Reuses connection pool via VectorStoreService
+    3. auto_create=False to avoid unnecessary collection creation
+    """
     try:
-        embedding_service = get_embedding_service(settings.embedding_model)
         vector_store = VectorStoreService(
             url=settings.qdrant_url,
             api_key=settings.qdrant_api_key,
             collection_name=f"session_{session_id}",
-            embedding_dim=embedding_service.get_dimension()
+            embedding_dim=_get_embedding_dimension(),
+            auto_create=False  # Don't create collection - just check
         )
+        
         collection_info = vector_store.get_collection_info()
         points_count = collection_info.get("points_count", 0)
+        
         return points_count > 0
+        
     except Exception as e:
         logger.warning(f"Could not check document availability: {e}")
         return False
+
+
+
 
 # Keep original non-streaming endpoint for backward compatibility
 @app.post("/chat", response_model=ChatResponse)
