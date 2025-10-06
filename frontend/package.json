@@ -12,9 +12,11 @@
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",
     "axios": "^1.12.2",
+    "katex": "^0.16.23",
     "lucide-react": "^0.544.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
+    "react-katex": "^3.1.0",
     "react-markdown": "^10.1.0",
     "react-syntax-highlighter": "^15.5.0",
     "remark-gfm": "^4.0.0",

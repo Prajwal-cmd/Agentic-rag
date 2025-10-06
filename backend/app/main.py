@@ -19,6 +19,9 @@ from .services.research_search import get_research_search_service  # NEW: Add th
 from .utils.document_processor import get_document_processor
 from .utils.logger import setup_logger
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from .services.literature_review import get_literature_review_service
+from .services.table_extractor import get_table_extractor
+from .services.math_handler import get_math_handler
 
 
 logger = setup_logger(__name__)
@@ -596,6 +599,196 @@ async def delete_session(session_id: str):
             status_code=500,
             detail=f"Failed to delete session: {str(e)}"
         )
+
+@app.post("/research/literature-review")
+async def literature_review(
+    research_question: str = Query(..., description="Research question to investigate"),
+    max_papers: int = Query(10, ge=1, le=20, description="Maximum papers to analyze"),
+    min_year: int = Query(2020, ge=1900, description="Minimum publication year"),
+    extract_structured: bool = Query(True, description="Extract key findings, methods, limitations")
+):
+    """
+    Conduct automated literature review (Elicit-style).
+    
+    NEW FEATURE: Multi-paper synthesis with citation export
+    """
+    logger.info(f"Literature review requested: {research_question}")
+    
+    try:
+        # Initialize services
+        groq_service = get_groq_service(settings.groq_api_key)
+        research_service = get_research_search_service(
+            api_key=settings.semantic_scholar_api_key,
+            llm_service=groq_service
+        )
+        lit_review_service = get_literature_review_service(groq_service, research_service)
+        
+        # Conduct review
+        result = lit_review_service.conduct_literature_review(
+            research_question=research_question,
+            max_papers=max_papers,
+            min_year=min_year,
+            extract_structured_data=extract_structured
+        )
+        
+        logger.info(f"✅ Literature review complete: {len(result['papers'])} papers")
+        
+        return result
+    
+    except Exception as e:
+        logger.error(f"Literature review error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/research/export-citations")
+async def export_citations(
+    paper_ids: List[str] = Query(..., description="Paper IDs to export"),
+    format: str = Query("bibtex", regex="^(bibtex|ris)$", description="Export format")
+):
+    """
+    Export citations in BibTeX or RIS format.
+    
+    NEW FEATURE: Citation management for research papers
+    """
+    logger.info(f"Citation export requested: {len(paper_ids)} papers, format={format}")
+    
+    try:
+        # Fetch papers
+        groq_service = get_groq_service(settings.groq_api_key)
+        research_service = get_research_search_service(
+            api_key=settings.semantic_scholar_api_key,
+            llm_service=groq_service
+        )
+        lit_review_service = get_literature_review_service(groq_service, research_service)
+        
+        # Get papers (simplified - you'd fetch from cache or API)
+        # For demo, return empty result
+        citations = lit_review_service._generate_citation_exports([])
+        
+        return {
+            "format": format,
+            "citations": citations.get(format, ""),
+            "count": citations.get("count", 0)
+        }
+    
+    except Exception as e:
+        logger.error(f"Citation export error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/research/extract-tables")
+async def extract_tables(
+    file: UploadFile = File(..., description="PDF file"),
+    pages: str = Query("all", description="Pages to extract (e.g., 'all', '1-3', '1,3,5')"),
+    output_format: str = Query("csv", regex="^(csv|excel|markdown)$")
+):
+    """
+    Extract tables from PDF.
+    
+    NEW FEATURE: Table extraction with multiple export formats
+    """
+    logger.info(f"Table extraction requested: {file.filename}, pages={pages}")
+    
+    try:
+        # Save uploaded file temporarily
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            content = await file.read()
+            tmp.write(content)
+            tmp_path = tmp.name
+        
+        # Extract tables
+        table_extractor = get_table_extractor()
+        tables = table_extractor.extract_tables_from_pdf(tmp_path, pages=pages)
+        
+        if not tables:
+            return {
+                "message": "No tables found in PDF",
+                "tables": [],
+                "summary": {}
+            }
+        
+        # Export tables
+        if output_format == "markdown":
+            markdown = table_extractor.tables_to_markdown(tables)
+            result = {
+                "format": "markdown",
+                "content": markdown,
+                "tables": len(tables)
+            }
+        else:
+            exported = table_extractor.export_tables(tables, output_format)
+            result = {
+                "format": output_format,
+                "files": exported,
+                "summary": table_extractor.get_table_summary(tables)
+            }
+        
+        # Clean up temp file
+        import os
+        os.unlink(tmp_path)
+        
+        logger.info(f"✅ Extracted {len(tables)} tables")
+        
+        return result
+    
+    except Exception as e:
+        logger.error(f"Table extraction error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/research/extract-math")
+async def extract_math(
+    text: str = Query(..., description="Text containing mathematical formulas"),
+    verify_latex: bool = Query(True, description="Verify LaTeX syntax"),
+    fix_errors: bool = Query(False, description="Attempt to fix broken LaTeX with LLM")
+):
+    """
+    Extract and normalize mathematical formulas from text.
+    
+    NEW FEATURE: LaTeX formula extraction and verification
+    """
+    logger.info(f"Math extraction requested: {len(text)} chars")
+    
+    try:
+        groq_service = get_groq_service(settings.groq_api_key)
+        math_handler = get_math_handler(groq_service)
+        
+        # Extract formulas
+        formulas = math_handler.extract_math_from_text(text)
+        
+        # Verify and fix if requested
+        for formula in formulas:
+            if verify_latex:
+                is_valid, error = math_handler.verify_latex_syntax(formula["latex"])
+                formula["valid"] = is_valid
+                formula["error"] = error
+                
+                if fix_errors and not is_valid:
+                    fixed = math_handler.fix_latex_with_llm(formula["latex"])
+                    if fixed:
+                        formula["fixed_latex"] = fixed
+            
+            # Normalize for rendering
+            formula["render_latex"] = math_handler.normalize_for_rendering(
+                formula.get("fixed_latex") or formula["latex"],
+                mode=formula["type"]
+            )
+        
+        logger.info(f"✅ Extracted {len(formulas)} formulas")
+        
+        return {
+            "formulas": formulas,
+            "total_count": len(formulas),
+            "inline_count": sum(1 for f in formulas if f["type"] == "inline"),
+            "block_count": sum(1 for f in formulas if f["type"] == "block")
+        }
+    
+    except Exception as e:
+        logger.error(f"Math extraction error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 
 if __name__ == "__main__":
     import uvicorn

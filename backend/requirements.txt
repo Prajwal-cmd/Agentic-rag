@@ -33,3 +33,11 @@ tenacity==8.2.3  # For retry decorators
 
 duckduckgo-search>=6.0.0
 arxiv>=2.1.0
+
+# Add to requirements.txt
+camelot-py[cv]>=0.11.0  # Table extraction (CV = computer vision)
+pdfplumber>=0.10.0      # Fallback table extractor
+bibtexparser>=1.4.0     # Citation export
+pylatexenc>=2.10        # LaTeX math parsing
+pandas>=2.0.0           # Table manipulation
+openpyxl>=3.1.0         # Excel export
