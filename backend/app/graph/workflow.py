@@ -68,7 +68,7 @@ def compile_workflow() -> StateGraph:
     workflow.add_node("research_search", research_search)
     workflow.add_node("wait_for_upload", wait_for_upload)
     workflow.add_node("hybrid_generate", hybrid_generate)
-    workflow.add_node("hybrid_web_research_generate", hybrid_web_research_generate)  # NEW
+    workflow.add_node("hybrid_web_research_generate", hybrid_web_research_generate)
     
     # Set entry point
     workflow.set_entry_point("route_question")

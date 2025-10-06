@@ -11,23 +11,41 @@ logger = setup_logger(__name__)
 
 def decide_to_generate(state: Dict[str, Any]) -> Literal["transform_query", "generate"]:
     """
-    Decide whether to generate answer or seek more information.
-    Pattern: Adaptive routing based on retrieval quality
-    Source: CRAG paper - confidence-based branching
+    FIXED: Decide based on document relevance percentage.
     
-    Args:
-        state: Current graph state
-    
-    Returns:
-        Next node name: "transform_query" or "generate"
+    Pattern: CRAG confidence-based branching
+    Source: Corrective RAG paper
     """
+    documents = state.get("documents", [])
     web_search_needed = state.get("web_search_needed", False)
     
+    # Calculate relevance ratio
+    if documents:
+        # Count how many docs passed grading (they're in the list)
+        total_retrieved = state.get("total_retrieved", len(documents))
+        relevant_count = len(documents)
+        
+        if total_retrieved > 0:
+            relevance_ratio = relevant_count / total_retrieved
+        else:
+            relevance_ratio = 0.0
+        
+        logger.info(f"Document relevance: {relevant_count}/{total_retrieved} = {relevance_ratio:.1%}")
+        
+        # CRITICAL FIX: Use relevance ratio for decision
+        if relevance_ratio < 0.5:  # Less than 50% relevant
+            logger.info("EDGE: LOW relevance (<50%) → transform_query + web_search")
+            return "transform_query"
+        else:
+            logger.info(f"EDGE: GOOD relevance ({relevance_ratio:.0%}) → generate")
+            return "generate"
+    
+    # No documents at all
     if web_search_needed:
-        logger.info("EDGE: Routing to transform_query (low confidence)")
+        logger.info("EDGE: No documents + web_search_needed → transform_query")
         return "transform_query"
     else:
-        logger.info("EDGE: Routing to generate (high confidence)")
+        logger.info("EDGE: No documents but proceeding to generate")
         return "generate"
 
 
@@ -40,36 +58,25 @@ def route_question_edge(state: Dict[str, Any]) -> Literal[
     "research_search",
     "hybrid_web_research_generate"  # NEW
 ]:
-    """
-    FIXED: Route based on initial query classification with all routing options.
-    """
     route_decision = state.get("route_decision", "direct_llm_generate")
     logger.info(f"EDGE: route_question_edge -> {route_decision}")
     
     if route_decision == "clarification":
         return "generate_clarification"
-    
     elif route_decision == "wait_for_upload":
         return "wait_for_upload"
-    
     elif route_decision in ["web_search", "websearch"]:
         return "web_search"
-    
     elif route_decision == "vectorstore":
         return "retrieve_documents"
-    
     elif route_decision == "hybrid":
         return "retrieve_documents"
-    
     elif route_decision == "research":
         return "research_search"
-    
     elif route_decision == "hybrid_research":
         return "retrieve_documents"
-    
     elif route_decision == "hybrid_web_research":  # NEW
         return "hybrid_web_research_generate"
-    
     else:
         return "direct_llm_generate"
 

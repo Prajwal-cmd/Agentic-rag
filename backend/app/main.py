@@ -249,16 +249,16 @@ async def chat_stream(request: ChatRequest):
                 )
             else:
                 history_dicts = [{"role": msg.role, "content": msg.content} for msg in history]
-            
+
             # Send progress: Starting
             yield f"event: progress\ndata: {json.dumps({'status': 'started', 'message': 'Processing your question...'})}\n\n"
-            
+
             # Stage 1: Query routing
             yield f"event: progress\ndata: {json.dumps({'status': 'routing', 'message': 'Analyzing query intent...'})}\n\n"
-            
+
             # Check document availability
             has_documents = check_document_availability(session_id)
-            
+
             # Prepare initial state
             initial_state = {
                 "question": request.message,
@@ -272,13 +272,13 @@ async def chat_stream(request: ChatRequest):
                 "session_id": session_id,
                 "working_memory": {}
             }
-            
+
             # Execute workflow with streaming
             current_node = None
             for step in workflow.stream(initial_state):
                 # Extract current node from step
                 node_name = list(step.keys())[0] if step else "unknown"
-                
+
                 # Send progress updates based on node
                 if node_name == "route_question":
                     route_decision = step[node_name].get("route_decision", "")
@@ -287,7 +287,7 @@ async def chat_stream(request: ChatRequest):
                             yield f"event: progress\ndata: {json.dumps({'status': 'retrieving', 'message': 'Searching your uploaded documents...'})}\n\n"
                         else:
                             yield f"event: progress\ndata: {json.dumps({'status': 'fallback', 'message': 'No documents found. Searching the web instead...'})}\n\n"
-                    elif route_decision == "websearch":
+                    elif route_decision == "web_search":
                         yield f"event: progress\ndata: {json.dumps({'status': 'web_search', 'message': 'Searching the web for current information...'})}\n\n"
                     elif route_decision == "hybrid":
                         yield f"event: progress\ndata: {json.dumps({'status': 'hybrid', 'message': 'Searching documents and web...'})}\n\n"
@@ -295,76 +295,82 @@ async def chat_stream(request: ChatRequest):
                         yield f"event: progress\ndata: {json.dumps({'status': 'research', 'message': 'Searching academic papers...'})}\n\n"
                     elif route_decision == "hybrid_research":  # NEW
                         yield f"event: progress\ndata: {json.dumps({'status': 'hybrid_research', 'message': 'Searching documents and research papers...'})}\n\n"
-                
+                    elif route_decision == "hybrid_web_research":  # NEW
+                        yield f"event: progress\ndata: {json.dumps({'status': 'hybrid_web_research', 'message': 'Searching research papers and web...'})}\n\n"
                 elif node_name == "retrieve_documents":
                     yield f"event: progress\ndata: {json.dumps({'status': 'retrieving', 'message': 'Retrieving relevant document chunks...'})}\n\n"
-                
                 elif node_name == "grade_documents":
                     yield f"event: progress\ndata: {json.dumps({'status': 'grading', 'message': 'Evaluating document relevance...'})}\n\n"
-                
                 elif node_name == "transform_query":
                     yield f"event: progress\ndata: {json.dumps({'status': 'transforming', 'message': 'Optimizing search query...'})}\n\n"
-                
                 elif node_name == "web_search":
                     yield f"event: progress\ndata: {json.dumps({'status': 'web_search', 'message': 'Fetching web results...'})}\n\n"
-                
                 elif node_name == "research_search":  # NEW
                     yield f"event: progress\ndata: {json.dumps({'status': 'research', 'message': 'Fetching academic papers...'})}\n\n"
-                
+                elif node_name == "hybrid_web_research_generate":  # NEW
+                    yield f"event: progress\ndata: {json.dumps({'status': 'hybrid_web_research', 'message': 'Combining research papers and web results...'})}\n\n"
                 elif node_name == "generate":
                     yield f"event: progress\ndata: {json.dumps({'status': 'generating', 'message': 'Generating response...'})}\n\n"
-                
+
                 current_node = step
-            
+
             # Get final state
             final_state = current_node[list(current_node.keys())[0]] if current_node else initial_state
-            
             answer = final_state.get("generation", "I apologize, but I couldn't generate an answer.")
             documents = final_state.get("documents", [])
             route = final_state.get("route_decision", "unknown")
-            
+
             # Add contextual message if no documents found but web search was used
             if route == "vectorstore" and not has_documents:
                 answer = f"**Note:** No documents were found in your session, so I searched the web instead.\n\n{answer}"
             elif route in ["vectorstore", "hybrid", "hybrid_research"] and not documents:
                 answer = f"**Note:** I couldn't find relevant information in your uploaded documents.\n\n{answer}"
-            
-            # NEW: Build sources (including research papers)
+
+            # FIXED: Build sources (including research papers) - Handle both dict and Document objects
             sources = []
             for doc in documents:
-                source_type = doc.metadata.get("source", "vectorstore")
+                # FIXED: Handle both dict and Document objects
+                if isinstance(doc, dict):
+                    # Dict format (from hybrid_web_research_generate)
+                    metadata = doc.get("metadata", {})
+                    page_content = doc.get("page_content", "")
+                    source_type = metadata.get("source", "vectorstore")
+                else:
+                    # Document object format (from other nodes)
+                    metadata = doc.metadata if hasattr(doc, 'metadata') else {}
+                    page_content = doc.page_content if hasattr(doc, 'page_content') else str(doc)
+                    source_type = metadata.get("source", "vectorstore")
                 
-                if source_type == "research":  # NEW: Handle research papers
+                if source_type == "research" or source_type == "semantic_scholar":  # Handle research papers
                     sources.append({
-                        "content": doc.page_content[:200] + "...",
-                        "title": doc.metadata.get("title", "Research Paper"),
-                        "url": doc.metadata.get("url"),
+                        "content": page_content[:200] + "...",
+                        "title": metadata.get("title", "Research Paper"),
+                        "url": metadata.get("url"),
                         "score": None,
                         "type": "research",
-                        "authors": doc.metadata.get("authors", []),
-                        "year": doc.metadata.get("year"),
-                        "citation_count": doc.metadata.get("citations"),
-                        "venue": doc.metadata.get("venue")
+                        "authors": metadata.get("authors", []),
+                        "year": metadata.get("year"),
+                        "citation_count": metadata.get("citations"),
+                        "venue": metadata.get("venue")
                     })
                 else:
                     sources.append({
-                        "content": doc.page_content[:200] + "...",
-                        "title": doc.metadata.get("title", doc.metadata.get("source", "Document")),
-                        "url": doc.metadata.get("source") if source_type == "web_search" else None,
-                        "score": doc.metadata.get("score"),
+                        "content": page_content[:200] + "...",
+                        "title": metadata.get("title", metadata.get("source", "Document")),
+                        "url": metadata.get("source") if source_type == "web_search" else metadata.get("url"),
+                        "score": metadata.get("score"),
                         "type": source_type
                     })
-            
+
             # Stream the answer token by token
             words = answer.split()
             for i, word in enumerate(words):
                 chunk = word + (" " if i < len(words) - 1 else "")
                 yield f"event: token\ndata: {json.dumps({'token': chunk})}\n\n"
-                
                 # Small delay for better UX
                 import asyncio
                 await asyncio.sleep(0.02)
-            
+
             # Send completion event with metadata
             completion_data = {
                 "status": "completed",
@@ -373,7 +379,7 @@ async def chat_stream(request: ChatRequest):
                 "session_id": session_id
             }
             yield f"event: complete\ndata: {json.dumps(completion_data)}\n\n"
-            
+
         except Exception as e:
             logger.error(f"Streaming error: {e}", exc_info=True)
             error_data = {
@@ -381,7 +387,7 @@ async def chat_stream(request: ChatRequest):
                 "message": str(e)
             }
             yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
-    
+
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
@@ -469,7 +475,7 @@ async def chat(request: ChatRequest):
         )
     
     session_id = request.session_id
-    logger.info(f"Using session_id: {session_id}, collection: session_{session_id}...")
+    logger.info(f"Using session_id: {session_id}, collection: session_{session_id}")
     
     # Check document availability
     has_documents = check_document_availability(session_id)
@@ -505,7 +511,7 @@ async def chat(request: ChatRequest):
     
     try:
         logger.info("Executing LangGraph workflow with research support")
-        final_state = execute_workflow_with_retry(workflow, initial_state) 
+        final_state = execute_workflow_with_retry(workflow, initial_state)
         
         answer = final_state.get("generation", "I apologize, but I couldn't generate an answer.")
         documents = final_state.get("documents", [])
@@ -517,30 +523,40 @@ async def chat(request: ChatRequest):
         elif route in ["vectorstore", "hybrid", "hybrid_research"] and not documents:
             answer = f"**Note:** I couldn't find relevant information in your uploaded documents.\n\n{answer}"
         
-        # NEW: Build sources (including research papers)
+        # FIXED: Build sources (including research papers) - Handle both dict and Document objects
         sources = []
         for doc in documents:
-            source_type = doc.metadata.get("source", "vectorstore")
+            # FIXED: Handle both dict and Document objects
+            if isinstance(doc, dict):
+                # Dict format (from hybrid_web_research_generate)
+                metadata = doc.get("metadata", {})
+                page_content = doc.get("page_content", "")
+                source_type = metadata.get("source", "vectorstore")
+            else:
+                # Document object format (from other nodes)
+                metadata = doc.metadata if hasattr(doc, 'metadata') else {}
+                page_content = doc.page_content if hasattr(doc, 'page_content') else str(doc)
+                source_type = metadata.get("source", "vectorstore")
             
-            if source_type == "research":  # NEW: Handle research papers
+            if source_type == "research" or source_type == "semantic_scholar":  # Handle research papers
                 sources.append(Source(
-                    content=doc.page_content[:200] + "...",
-                    title=doc.metadata.get("title", "Research Paper"),
-                    url=doc.metadata.get("url"),
+                    content=page_content[:200] + "...",
+                    title=metadata.get("title", "Research Paper"),
+                    url=metadata.get("url"),
                     score=None,
                     type="research",
-                    authors=doc.metadata.get("authors", []),
-                    year=doc.metadata.get("year"),
-                    citation_count=doc.metadata.get("citations"),
-                    venue=doc.metadata.get("venue"),
-                    paper_id=doc.metadata.get("paper_id")
+                    authors=metadata.get("authors", []),
+                    year=metadata.get("year"),
+                    citation_count=metadata.get("citations"),
+                    venue=metadata.get("venue"),
+                    paper_id=metadata.get("paper_id")
                 ))
             else:
                 sources.append(Source(
-                    content=doc.page_content[:200] + "...",
-                    title=doc.metadata.get("title", doc.metadata.get("source", "Document")),
-                    url=doc.metadata.get("source") if source_type == "web_search" else None,
-                    score=doc.metadata.get("score"),
+                    content=page_content[:200] + "...",
+                    title=metadata.get("title", metadata.get("source", "Document")),
+                    url=metadata.get("source") if source_type == "web_search" else metadata.get("url"),
+                    score=metadata.get("score"),
                     type=source_type
                 ))
         
@@ -552,7 +568,7 @@ async def chat(request: ChatRequest):
             session_id=session_id,
             route_taken=route
         )
-        
+    
     except Exception as e:
         logger.error(f"Chat execution error: {e}", exc_info=True)
         raise HTTPException(

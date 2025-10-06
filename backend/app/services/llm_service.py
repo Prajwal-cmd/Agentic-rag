@@ -11,11 +11,12 @@ from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel
 import time
 import random
+import json
 from functools import wraps
+
 from ..utils.logger import setup_logger
 
 logger = setup_logger(__name__)
-
 
 class CircuitBreaker:
     """Circuit breaker pattern to prevent cascading failures."""
@@ -42,6 +43,7 @@ class CircuitBreaker:
                 self.failure_count = 0
                 logger.info("Circuit breaker reset to CLOSED")
             return result
+        
         except Exception as e:
             self.failure_count += 1
             self.last_failure_time = time.time()
@@ -49,8 +51,8 @@ class CircuitBreaker:
             if self.failure_count >= self.failure_threshold:
                 self.state = "OPEN"
                 logger.error(f"Circuit breaker opened after {self.failure_count} failures")
+            
             raise e
-
 
 def with_retry_and_fallback(
     max_retries: int = 3,
@@ -61,7 +63,6 @@ def with_retry_and_fallback(
 ):
     """
     Decorator for exponential backoff with jitter on LLM calls.
-    
     Pattern: Exponential Backoff (Industry Standard)
     Source: AWS Architecture, Google SRE Handbook
     """
@@ -73,7 +74,7 @@ def with_retry_and_fallback(
             for attempt in range(max_retries):
                 try:
                     return func(*args, **kwargs)
-                    
+                
                 except Exception as e:
                     error_str = str(e).lower()
                     last_exception = e
@@ -100,6 +101,7 @@ def with_retry_and_fallback(
                             f"Attempt {attempt + 1}/{max_retries} failed: {e}. "
                             f"Retrying in {delay:.2f}s..."
                         )
+                        
                         time.sleep(delay)
                     else:
                         logger.error(f"All {max_retries} attempts failed. Last error: {e}")
@@ -109,7 +111,6 @@ def with_retry_and_fallback(
         
         return wrapper
     return decorator
-
 
 class GroqService:
     """Enhanced Groq Service with error handling and circuit breaker."""
@@ -124,20 +125,19 @@ class GroqService:
             api_key=self.api_key,
             model=model,
             temperature=temperature,
-            timeout=30.0,  # Add timeout
-            max_retries=2  # Built-in retry
+            timeout=30.0,
+            max_retries=2
         )
     
     @with_retry_and_fallback(max_retries=3, base_delay=1.0)
     def get_structured_llm(
-        self, 
-        model: str, 
+        self,
+        model: str,
         schema: Type[BaseModel],
         temperature: float = 0.0
     ) -> Any:
         """
         Get structured LLM with error handling and fallback.
-        
         CRITICAL FIX: Wraps structured output with retry and fallback logic
         """
         try:
@@ -146,15 +146,14 @@ class GroqService:
                 model=model,
                 temperature=temperature,
                 timeout=30.0,
-                max_retries=0  # We handle retries ourselves
+                max_retries=0
             )
             
-            # Use circuit breaker
             def _create_structured():
                 return llm.with_structured_output(schema, method="function_calling")
             
             return self.circuit_breaker.call(_create_structured)
-            
+        
         except Exception as e:
             logger.error(f"Failed to create structured LLM: {e}")
             raise
@@ -168,14 +167,14 @@ class GroqService:
     ) -> Any:
         """
         Invoke LLM chain with structured output fallback.
-        
         Pattern: Graceful Degradation
-        If structured output fails, fall back to JSON parsing
+        
+        CRITICAL FIX: Properly escape JSON schema for ChatPromptTemplate
         """
         try:
             # Primary: Structured output
             return llm_chain.invoke(input_data)
-            
+        
         except Exception as e:
             error_str = str(e).lower()
             
@@ -184,39 +183,57 @@ class GroqService:
                 logger.warning("Structured output failed, attempting JSON fallback")
                 
                 try:
-                    # Get unstructured LLM
                     from langchain_core.output_parsers import JsonOutputParser
                     from langchain_core.prompts import ChatPromptTemplate
                     
-                    # Reconstruct prompt with JSON instructions
+                    # Get unstructured LLM
                     unstructured_llm = self.get_llm(model="llama-3.1-8b-instant", temperature=0)
                     json_parser = JsonOutputParser(pydantic_object=schema)
                     
-                    # Simplify the prompt
+                    # CRITICAL FIX: Get JSON schema and serialize it safely
+                    schema_dict = schema.model_json_schema()
+                    
+                    # Convert to JSON string and escape for template
+                    schema_json_str = json.dumps(schema_dict, indent=2)
+                    
+                    # CRITICAL: Escape curly braces for LangChain template
+                    # Single { becomes {{, single } becomes }}
+                    escaped_schema = schema_json_str.replace("{", "{{").replace("}", "}}")
+                    
+                    # Build simple prompt with escaped schema
                     simple_prompt = ChatPromptTemplate.from_messages([
-                        ("system", f"You are a helpful assistant. Return valid JSON matching this schema: {schema.schema_json()}"),
+                        ("system", f"""You are a helpful assistant that returns valid JSON.
+
+Return JSON matching this schema:
+{escaped_schema}
+
+IMPORTANT: Return ONLY the JSON object, no other text."""),
                         ("human", "{input}")
                     ])
                     
-                    fallback_chain = simple_prompt | unstructured_llm | json_parser
-                    
                     # Extract original input
-                    original_input = input_data.get("question") or str(input_data)
+                    original_input = (
+                        input_data.get("question") or 
+                        input_data.get("query") or 
+                        input_data.get("input") or 
+                        str(input_data)
+                    )
+                    
+                    # Invoke fallback chain
+                    fallback_chain = simple_prompt | unstructured_llm | json_parser
                     result = fallback_chain.invoke({"input": original_input})
                     
-                    # Validate with Pydantic
+                    # Validate and return
                     return schema(**result)
-                    
+                
                 except Exception as fallback_error:
                     logger.error(f"JSON fallback also failed: {fallback_error}")
                     raise e  # Raise original error
             
             raise e
 
-
 # Singleton instance
 _groq_service: Optional[GroqService] = None
-
 
 def get_groq_service(api_key: str) -> GroqService:
     """Get or create Groq service singleton."""
