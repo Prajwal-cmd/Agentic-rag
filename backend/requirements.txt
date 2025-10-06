@@ -30,3 +30,6 @@ pydantic==2.9.0
 pydantic-settings==2.5.0
 
 tenacity==8.2.3  # For retry decorators
+
+duckduckgo-search>=6.0.0
+arxiv>=2.1.0

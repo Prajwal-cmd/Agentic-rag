@@ -19,11 +19,13 @@ from ..models.graders import GradeDocuments, RouteQuery
 from ..services.llm_service import get_groq_service
 from ..services.embeddings import get_embedding_service
 from ..services.vector_store import VectorStoreService
-from ..services.web_search import get_web_search_service
+# from ..services.web_search import get_web_search_service
 from ..config import settings
 from ..utils.logger import setup_logger
-from ..services.research_search import get_research_search_service
+# from ..services.research_search import get_research_search_service
 from ..services.semantic_router import get_semantic_router
+from ..services.web_search_fallback import get_web_search_service
+from ..services.research_search_fallback import get_research_search_service
 
 logger = setup_logger(__name__)
 
