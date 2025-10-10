@@ -1,41 +1,47 @@
 """
 Document Processing Utilities
-Pattern: Recursive chunking for optimal context preservation
-Source: LangChain text splitters
+
+Pattern: Recursive chunking with contextual embedding support
+Source: LangChain text splitters + Anthropic Contextual Retrieval
 """
+
 from typing import List, Dict
 import PyPDF2
 from docx import Document as DocxDocument
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from io import BytesIO
 from ..utils.logger import setup_logger
+from ..config import settings
 
 logger = setup_logger(__name__)
 
 class DocumentProcessor:
     """
     Process various document formats into chunks for embedding.
+    Now supports contextual embedding for improved retrieval.
     """
     
-    def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 200):
+    def __init__(self, chunk_size: int = None, chunk_overlap: int = None):
         """
         Initialize document processor.
         
         Args:
-            chunk_size: Target chunk size in characters
-            chunk_overlap: Overlap between chunks for context preservation
+            chunk_size: Target chunk size in characters (default from config)
+            chunk_overlap: Overlap between chunks for context preservation (default from config)
         """
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
+        self.chunk_size = chunk_size or settings.chunk_size
+        self.chunk_overlap = chunk_overlap or settings.chunk_overlap
         
         # RecursiveCharacterTextSplitter - industry standard
         # Source: LangChain documentation
         self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            separators=["\n\n", "\n", ". ", " ", ""],  # Hierarchical splitting
+            chunk_size=self.chunk_size,
+            chunk_overlap=self.chunk_overlap,
+            separators=["\n\n", "\n", ". ", ", ", " ", ""],  # Hierarchical splitting
             length_function=len
         )
+        
+        logger.info(f"DocumentProcessor initialized (chunk_size={self.chunk_size}, overlap={self.chunk_overlap})")
     
     def extract_text_from_pdf(self, file_bytes: BytesIO) -> str:
         """Extract text from PDF file"""
@@ -43,87 +49,135 @@ class DocumentProcessor:
             pdf_reader = PyPDF2.PdfReader(file_bytes)
             text = ""
             for page in pdf_reader.pages:
-                text += page.extract_text() + "\n"
-            return text.strip()
+                text += page.extract_text()
+            return text
         except Exception as e:
-            logger.error(f"PDF extraction error: {e}")
-            raise ValueError(f"Failed to extract PDF text: {e}")
+            logger.error(f"PDF extraction failed: {e}")
+            raise ValueError(f"Failed to process PDF: {str(e)}")
     
     def extract_text_from_docx(self, file_bytes: BytesIO) -> str:
         """Extract text from DOCX file"""
         try:
             doc = DocxDocument(file_bytes)
-            text = "\n".join([para.text for para in doc.paragraphs])
-            return text.strip()
+            text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
+            return text
         except Exception as e:
-            logger.error(f"DOCX extraction error: {e}")
-            raise ValueError(f"Failed to extract DOCX text: {e}")
+            logger.error(f"DOCX extraction failed: {e}")
+            raise ValueError(f"Failed to process DOCX: {str(e)}")
     
-    def extract_text_from_txt(self, file_bytes: bytes) -> str:
+    def extract_text_from_txt(self, file_bytes: BytesIO) -> str:
         """Extract text from TXT file"""
         try:
-            text = file_bytes.decode('utf-8')
-            return text.strip()
-        except UnicodeDecodeError:
-            # Try alternative encodings
-            try:
-                text = file_bytes.decode('latin-1')
-                return text.strip()
-            except Exception as e:
-                logger.error(f"TXT decoding error: {e}")
-                raise ValueError(f"Failed to decode text file: {e}")
+            return file_bytes.read().decode('utf-8')
+        except Exception as e:
+            logger.error(f"TXT extraction failed: {e}")
+            raise ValueError(f"Failed to process TXT: {str(e)}")
     
-    def process_file(self, file_bytes: BytesIO, filename: str) -> List[Dict]:
+    def process_document(self, file_bytes: BytesIO, filename: str, session_id: str) -> Dict:
         """
-        Process file into chunks with metadata.
+        Process document and return chunks with metadata + full text.
+        
+        ENHANCED: Returns full document text for contextual embedding.
         
         Args:
-            file_bytes: Raw file bytes as BytesIO
-            filename: Original filename
+            file_bytes: Document file bytes (BytesIO object)
+            filename: Original filename with extension
+            session_id: User session ID for tracking
             
         Returns:
-            List of chunk dictionaries with text and metadata
+            Dict containing:
+                - chunks: List of chunk dicts with text and metadata
+                - full_text: Complete document text (for contextual embedding)
+                - metadata: Document-level metadata
+                
+        Raises:
+            ValueError: If file type unsupported or document empty
         """
-        # Extract text based on file type
-        extension = filename.lower().split('.')[-1]
+        # Determine file type from extension
+        file_extension = filename.lower().split('.')[-1] if '.' in filename else 'unknown'
         
-        if extension == 'pdf':
-            text = self.extract_text_from_pdf(file_bytes)
-        elif extension in ['docx', 'doc']:
-            text = self.extract_text_from_docx(file_bytes)
-        elif extension == 'txt':
-            # For txt, we need raw bytes
-            file_bytes.seek(0)
-            text = self.extract_text_from_txt(file_bytes.read())
-        else:
-            raise ValueError(f"Unsupported file type: {extension}")
+        # Extract text based on file type
+        try:
+            if file_extension == 'pdf':
+                text = self.extract_text_from_pdf(file_bytes)
+            elif file_extension in ['docx', 'doc']:
+                text = self.extract_text_from_docx(file_bytes)
+            elif file_extension == 'txt':
+                text = self.extract_text_from_txt(file_bytes)
+            else:
+                raise ValueError(f"Unsupported file type: {file_extension}. Supported: PDF, DOCX, TXT")
+        except Exception as e:
+            logger.error(f"Text extraction failed for {filename}: {e}")
+            raise ValueError(f"Failed to extract text from {filename}: {str(e)}")
+        
+        # Validate extracted text
+        if not text or len(text.strip()) < 10:
+            raise ValueError(f"Document appears to be empty or unreadable: {filename}")
         
         logger.info(f"Extracted {len(text)} characters from {filename}")
         
         # Split into chunks
-        chunks = self.text_splitter.split_text(text)
-        logger.info(f"Created {len(chunks)} chunks from {filename}")
+        chunks_text = self.text_splitter.split_text(text)
+        
+        if not chunks_text:
+            raise ValueError(f"Document chunking failed for {filename}")
         
         # Create chunk dictionaries with metadata
-        chunk_dicts = []
-        for i, chunk in enumerate(chunks):
-            chunk_dicts.append({
-                "text": chunk,
+        chunks = []
+        for i, chunk_text in enumerate(chunks_text):
+            # Calculate relative position in document
+            relative_position = i / max(len(chunks_text), 1)
+            
+            chunk = {
+                "text": chunk_text,
                 "metadata": {
-                    "source": filename,
+                    "filename": filename,
+                    "session_id": session_id,
                     "chunk_index": i,
-                    "total_chunks": len(chunks)
+                    "total_chunks": len(chunks_text),
+                    "file_type": file_extension,
+                    "relative_position": relative_position,  # NEW: 0.0 to 1.0
+                    "is_first_chunk": (i == 0),  # NEW: Boolean flag
+                    "is_last_chunk": (i == len(chunks_text) - 1),  # NEW: Boolean flag
+                    "has_context": False,  # Will be updated if contextual embedding applied
+                    "source": f"{filename} (chunk {i+1}/{len(chunks_text)})"  # NEW: Human-readable source
                 }
-            })
+            }
+            chunks.append(chunk)
         
-        return chunk_dicts
+        logger.info(f"✅ Split document into {len(chunks)} chunks")
+        
+        # Document-level metadata
+        doc_metadata = {
+            "filename": filename,
+            "session_id": session_id,
+            "total_chunks": len(chunks),
+            "file_type": file_extension,
+            "char_count": len(text),
+            "word_count": len(text.split()),  # NEW: Approximate word count
+            "avg_chunk_size": len(text) // max(len(chunks), 1)  # NEW: Average chunk size
+        }
+        
+        return {
+            "chunks": chunks,
+            "full_text": text,  # CRITICAL: Full text for contextual embedding
+            "metadata": doc_metadata
+        }
 
-# Global processor instance
-document_processor = None
 
-def get_document_processor(chunk_size: int = 1000, chunk_overlap: int = 200) -> DocumentProcessor:
-    """Get or create global document processor instance"""
-    global document_processor
-    if document_processor is None:
-        document_processor = DocumentProcessor(chunk_size, chunk_overlap)
-    return document_processor
+
+
+    def get_chunk_preview(self, chunk_text: str, max_length: int = 100) -> str:
+        """Get a preview of chunk text for logging."""
+        if len(chunk_text) <= max_length:
+            return chunk_text
+        return chunk_text[:max_length] + "..."
+
+
+# Global instance with caching
+from functools import lru_cache
+
+@lru_cache(maxsize=1)
+def get_document_processor() -> DocumentProcessor:
+    """Get or create global document processor instance."""
+    return DocumentProcessor()

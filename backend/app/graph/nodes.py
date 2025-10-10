@@ -26,6 +26,15 @@ from ..utils.logger import setup_logger
 from ..services.semantic_router import get_semantic_router
 from ..services.web_search_fallback import get_web_search_service
 from ..services.research_search_fallback import get_research_search_service
+# ADD these NEW imports after existing imports
+from ..services.query_rewriter import get_query_rewriter
+from ..services.reranker import get_reranker
+from ..services.hybrid_search import get_hybrid_search
+# NEW: Advanced routing system
+from ..services.advanced_router import get_advanced_router, RouteType, RoutingDecision
+
+from langchain_core.documents import Document
+
 
 logger = setup_logger(__name__)
 
@@ -135,92 +144,92 @@ class QueryClarification(BaseModel):
 
 # ========== CONTEXT ENRICHMENT FUNCTIONS ==========
 
-def detect_follow_up_query(
-    question: str,
-    history: List[Dict],
-    working_memory: Dict[str, str]
-) -> Dict[str, Any]:
-    """
-    Detect if query is a follow-up that references previous conversation.
-    Pattern: SELF-multi-RAG conversational context detection
+# def detect_follow_up_query(
+#     question: str,
+#     history: List[Dict],
+#     working_memory: Dict[str, str]
+# ) -> Dict[str, Any]:
+#     """
+#     Detect if query is a follow-up that references previous conversation.
+#     Pattern: SELF-multi-RAG conversational context detection
     
-    Returns:
-        is_follow_up: bool
-        reference_type: str (pronoun, computational, continuation, none)
-        confidence: float
-    """
-    if not history or len(history) < 2:
-        return {"is_follow_up": False, "reference_type": "none", "confidence": 0.0}
+#     Returns:
+#         is_follow_up: bool
+#         reference_type: str (pronoun, computational, continuation, none)
+#         confidence: float
+#     """
+#     if not history or len(history) < 2:
+#         return {"is_follow_up": False, "reference_type": "none", "confidence": 0.0}
     
-    question_lower = question.lower().strip()
+#     question_lower = question.lower().strip()
     
-    # PATTERN 1: Pronoun references (it, this, that, etc.)
-    pronoun_patterns = [
-        r'\b(it|this|that|these|those|the one|them)\b',
-        r'^(what about|how about|why|explain)\s+(it|this|that)',
-        r'\b(the|that)\s+(result|answer|value|calculation|number)\b'
-    ]
+#     # PATTERN 1: Pronoun references (it, this, that, etc.)
+#     pronoun_patterns = [
+#         r'\b(it|this|that|these|those|the one|them)\b',
+#         r'^(what about|how about|why|explain)\s+(it|this|that)',
+#         r'\b(the|that)\s+(result|answer|value|calculation|number)\b'
+#     ]
     
-    has_pronoun = any(re.search(pattern, question_lower) for pattern in pronoun_patterns)
+#     has_pronoun = any(re.search(pattern, question_lower) for pattern in pronoun_patterns)
     
-    # PATTERN 2: Computational follow-ups (references variables or results)
-    computational_patterns = [
-        r'\b(calculate|compute|find|solve|what is)\s+[a-z]\s*[\+\-\*\/]',
-        r'^[a-z]\s*[\+\-\*\/]',  # "x + 5"
-        r'\busing (that|the|this)\b',
-        r'\b(with|from)\s+(that|the|this)\s+(value|result|answer)\b'
-    ]
+#     # PATTERN 2: Computational follow-ups (references variables or results)
+#     computational_patterns = [
+#         r'\b(calculate|compute|find|solve|what is)\s+[a-z]\s*[\+\-\*\/]',
+#         r'^[a-z]\s*[\+\-\*\/]',  # "x + 5"
+#         r'\busing (that|the|this)\b',
+#         r'\b(with|from)\s+(that|the|this)\s+(value|result|answer)\b'
+#     ]
     
-    is_computational_followup = any(re.search(pattern, question_lower) for pattern in computational_patterns)
+#     is_computational_followup = any(re.search(pattern, question_lower) for pattern in computational_patterns)
     
-    # Check if working memory has relevant variables
-    has_memory_reference = False
-    if working_memory:
-        # Extract variables from query
-        tokens = re.findall(r'\b[a-z]\b', question_lower)
-        has_memory_reference = any(var in working_memory for var in tokens)
+#     # Check if working memory has relevant variables
+#     has_memory_reference = False
+#     if working_memory:
+#         # Extract variables from query
+#         tokens = re.findall(r'\b[a-z]\b', question_lower)
+#         has_memory_reference = any(var in working_memory for var in tokens)
     
-    # PATTERN 3: Continuation words (also, then, next, etc.)
-    continuation_patterns = [
-        r'^(also|then|next|now|after that|and)',
-        r'\b(what else|what other|any other|what more)\b',
-        r'\b(continue|keep going|go on)\b'
-    ]
+#     # PATTERN 3: Continuation words (also, then, next, etc.)
+#     continuation_patterns = [
+#         r'^(also|then|next|now|after that|and)',
+#         r'\b(what else|what other|any other|what more)\b',
+#         r'\b(continue|keep going|go on)\b'
+#     ]
     
-    has_continuation = any(re.search(pattern, question_lower) for pattern in continuation_patterns)
+#     has_continuation = any(re.search(pattern, question_lower) for pattern in continuation_patterns)
     
-    # PATTERN 4: Short queries (likely follow-ups)
-    is_short_query = len(question.split()) <= 5 and len(question) < 50
+#     # PATTERN 4: Short queries (likely follow-ups)
+#     is_short_query = len(question.split()) <= 5 and len(question) < 50
     
-    # Determine follow-up type and confidence
-    if is_computational_followup or has_memory_reference:
-        return {
-            "is_follow_up": True,
-            "reference_type": "computational",
-            "confidence": 0.95,
-            "can_answer_from_memory": has_memory_reference
-        }
-    elif has_pronoun and is_short_query:
-        return {
-            "is_follow_up": True,
-            "reference_type": "pronoun",
-            "confidence": 0.85,
-            "can_answer_from_memory": False
-        }
-    elif has_continuation:
-        return {
-            "is_follow_up": True,
-            "reference_type": "continuation",
-            "confidence": 0.75,
-            "can_answer_from_memory": False
-        }
-    else:
-        return {
-            "is_follow_up": False,
-            "reference_type": "none",
-            "confidence": 0.0,
-            "can_answer_from_memory": False
-        }
+#     # Determine follow-up type and confidence
+#     if is_computational_followup or has_memory_reference:
+#         return {
+#             "is_follow_up": True,
+#             "reference_type": "computational",
+#             "confidence": 0.95,
+#             "can_answer_from_memory": has_memory_reference
+#         }
+#     elif has_pronoun and is_short_query:
+#         return {
+#             "is_follow_up": True,
+#             "reference_type": "pronoun",
+#             "confidence": 0.85,
+#             "can_answer_from_memory": False
+#         }
+#     elif has_continuation:
+#         return {
+#             "is_follow_up": True,
+#             "reference_type": "continuation",
+#             "confidence": 0.75,
+#             "can_answer_from_memory": False
+#         }
+#     else:
+#         return {
+#             "is_follow_up": False,
+#             "reference_type": "none",
+#             "confidence": 0.0,
+#             "can_answer_from_memory": False
+#         }
 
 
 def summarize_conversation_for_query(
@@ -273,36 +282,36 @@ def summarize_conversation_for_query(
 
 
 
-def enrich_query_with_context(question: str, working_memory: Dict[str, str], history: List[Dict]) -> str:
-    """
-    Enrich ambiguous queries with working memory context before processing.
-    Pattern: Context-aware query rewriting (Adobe Experience Platform, enterprise RAG)
-    """
-    # Check if query references known variables
-    tokens = re.findall(r'\b[a-zA-Z_]\w*\b', question)
-    referenced_vars = [var for var in tokens if var in working_memory]
+# def enrich_query_with_context(question: str, working_memory: Dict[str, str], history: List[Dict]) -> str:
+#     """
+#     Enrich ambiguous queries with working memory context before processing.
+#     Pattern: Context-aware query rewriting (Adobe Experience Platform, enterprise RAG)
+#     """
+#     # Check if query references known variables
+#     tokens = re.findall(r'\b[a-zA-Z_]\w*\b', question)
+#     referenced_vars = [var for var in tokens if var in working_memory]
     
-    if referenced_vars:
-        # Inject context directly into query
-        context_additions = []
-        for var in referenced_vars:
-            context_additions.append(f"{var}={working_memory[var]}")
+#     if referenced_vars:
+#         # Inject context directly into query
+#         context_additions = []
+#         for var in referenced_vars:
+#             context_additions.append(f"{var}={working_memory[var]}")
         
-        enriched_query = f"{question} (Context: {', '.join(context_additions)})"
-        logger.info(f"Query enriched with working memory: {enriched_query}")
-        return enriched_query
+#         enriched_query = f"{question} (Context: {', '.join(context_additions)})"
+#         logger.info(f"Query enriched with working memory: {enriched_query}")
+#         return enriched_query
     
-    # Check for pronouns/references requiring history context
-    ambiguous_patterns = r'\b(it|that|this|the one|previous|earlier)\b'
-    if re.search(ambiguous_patterns, question.lower()):
-        # Extract last topic/entity from history
-        recent_context = extract_recent_topic(history)
-        if recent_context:
-            enriched_query = f"{question} [Referring to: {recent_context}]"
-            logger.info(f"Query enriched with history context: {enriched_query}")
-            return enriched_query
+#     # Check for pronouns/references requiring history context
+#     ambiguous_patterns = r'\b(it|that|this|the one|previous|earlier)\b'
+#     if re.search(ambiguous_patterns, question.lower()):
+#         # Extract last topic/entity from history
+#         recent_context = extract_recent_topic(history)
+#         if recent_context:
+#             enriched_query = f"{question} [Referring to: {recent_context}]"
+#             logger.info(f"Query enriched with history context: {enriched_query}")
+#             return enriched_query
     
-    return question
+#     return question
 
 
 
@@ -1317,180 +1326,95 @@ Choose the BEST single route and explain briefly why.""")
             temporal_context=False
         )
 
-
 def route_question(state: Dict[str, Any]) -> Dict[str, Any]:
     """
-    PRODUCTION-GRADE: Three-tier routing with conversational awareness
-    Pattern: Rule-Based → Semantic → LLM (with follow-up detection)
-    Source: SELF-multi-RAG 2024, RAGRouter 2025
+    PRODUCTION-GRADE: Multi-tier routing with RAG awareness.
     
-    CRITICAL FIX: Detects follow-up queries and routes to memory instead of web search
+    Architecture:
+    - Tier 0: Working Memory (0-2ms)
+    - Tier 1: Rule-Based (2-10ms)  
+    - Tier 2: Semantic (10-50ms)
+    - Tier 3: RAG-Aware (50-200ms)
     
-    Flow:
-        1. Detect follow-up queries (NEW)
-        2. Summarize conversation if follow-up (NEW)
-        3. Rule-based pre-filter (0ms, ~40% of queries)
-        4. Semantic routing (20-50ms, ~40% of queries)
-        5. LLM routing (200-400ms, ~20% of queries)
+    Research: RAGRouter (2025), EMNLP 2024, Semantic Router
     """
-    logger.info("NODE: route_question (THREE-TIER ROUTING WITH FOLLOW-UP DETECTION)")
+    logger.info("NODE: route_question (PRODUCTION 4-TIER ROUTING)")
     
+    question = state["question"]
+    session_id = state["session_id"]
+    history = state.get("conversation_history", [])
+    working_memory = state.get("working_memory", {})
+    
+    # Check document availability
+    has_documents = False
     try:
-        question = state["question"]
-        session_id = state["session_id"]
-        history = state.get("conversation_history", [])
-        working_memory = state.get("working_memory", {})
-        
-        # ========== STEP 1: Check Document Availability ==========
-        try:
-            has_documents = check_document_availability(session_id)
-        except Exception as e:
-            logger.warning(f"Document check failed: {e}, assuming no documents")
-            has_documents = False
-        
-        # ========== STEP 2: Detect Follow-Up Queries (NEW) ==========
-        follow_up_info = detect_follow_up_query(question, history, working_memory)
-        
-        logger.info(f"Follow-up detection: {follow_up_info}")
-        
-        # ========== STEP 3: Enrich/Summarize Query ==========
-        if follow_up_info["is_follow_up"]:
-            # Use conversation summarization for follow-ups
-            enriched_question = summarize_conversation_for_query(question, history, working_memory)
-        else:
-            # Use simple context enrichment
-            enriched_question = enrich_query_with_context(question, working_memory, history)
-        
-        # ========== TIER 1: RULE-BASED PRE-FILTER (40% of queries) ==========
-        try:
-            from ..services.rule_based_router import RuleBasedRouter
-            rule_router = RuleBasedRouter()
-            rule_result = rule_router.route(enriched_question, has_documents)
-            
-            if rule_result:
-                route, confidence, reason = rule_result
-                logger.info(f"✅ TIER 1 (Rule-Based): {route} (confidence={confidence:.2f}) - {reason}")
-                
-                # Store enriched question for downstream nodes
-                state["enriched_question"] = enriched_question
-                state["route_decision"] = route
-                state["routing_confidence"] = confidence
-                state["routing_reason"] = reason
-                state["query_complexity"] = "simple"
-                
-                return state
-        
-        except Exception as e:
-            logger.warning(f"Rule-based routing failed: {e}, falling back to semantic")
-        
-        # ========== TIER 2: SEMANTIC ROUTING (40% of queries) ==========
-        try:
-            embedding_service = get_embedding_service()
-            semantic_router = get_semantic_router(embedding_service)
-            
-            # Add follow-up route to semantic router templates
-            if not hasattr(semantic_router, '_followup_initialized'):
-                semantic_router.route_templates["continue_with_memory"] = [
-                    "calculate that plus 5",
-                    "what is x times 2",
-                    "solve it again",
-                    "use that value",
-                    "what about the result",
-                    "multiply it by 3"
-                ]
-                # Recompute embeddings
-                semantic_router.route_embeddings = semantic_router._compute_route_embeddings()
-                semantic_router._followup_initialized = True
-            
-            semantic_route, semantic_confidence, all_similarities = semantic_router.route(
-                enriched_question,
-                has_documents
-            )
-            
-            # CRITICAL FIX: Override semantic route if follow-up with memory
-            if follow_up_info.get("can_answer_from_memory") and semantic_route in ["web_search", "vectorstore"]:
-                logger.info(f"🔧 Override: Follow-up with memory, changing {semantic_route} → direct_llm")
-                semantic_route = "direct_llm"
-                semantic_confidence = 0.9
-            
-            # Use semantic routing if confidence high enough
-            if semantic_confidence >= 0.65:  # FIXED: Lowered from 0.7
-                logger.info(f"✅ TIER 2 (Semantic): {semantic_route} (confidence={semantic_confidence:.2f})")
-                
-                state["enriched_question"] = enriched_question
-                state["route_decision"] = semantic_route
-                state["routing_confidence"] = semantic_confidence
-                state["routing_reason"] = f"Semantic similarity: {semantic_confidence:.2f}"
-                state["query_complexity"] = "moderate"
-                
-                return state
-        
-        except Exception as e:
-            logger.warning(f"Semantic routing failed: {e}, falling back to LLM")
-        
-        # ========== TIER 3: LLM ROUTING (20% of queries) ==========
-        try:
-            # Classify intent first
-            intent = QueryIntent(
-                intent_type="follow_up" if follow_up_info["is_follow_up"] else "factual",
-                needs_documents=has_documents,
-                needs_web=not follow_up_info.get("can_answer_from_memory", False),
-                needs_retrieval=not follow_up_info.get("can_answer_from_memory", False),
-                ambiguity_score=0.3 if follow_up_info.get("can_answer_from_memory") else 0.6,
-                context_dependent=follow_up_info["is_follow_up"],
-                is_follow_up=follow_up_info["is_follow_up"]
-            )
-            
-            llm_result = intelligent_llm_routing(
-                question,
-                enriched_question,
-                has_documents,
-                intent,
-                follow_up_info
-            )
-            
-            logger.info(f"✅ TIER 3 (LLM): {llm_result.datasource} (confidence={llm_result.confidence:.2f}) - {llm_result.reasoning}")
-            
-            # Map continue_with_memory to direct_llm for compatibility
-            final_route = llm_result.datasource
-            if final_route == "continue_with_memory":
-                final_route = "direct_llm"
-            
-            state["enriched_question"] = enriched_question
-            state["route_decision"] = final_route
-            state["routing_confidence"] = llm_result.confidence
-            state["routing_reason"] = llm_result.reasoning
-            state["query_complexity"] = llm_result.query_complexity
-            
-            return state
-        
-        except Exception as e:
-            logger.error(f"All routing tiers failed: {e}")
-            
-            # Emergency fallback
-            if follow_up_info.get("can_answer_from_memory"):
-                final_route = "direct_llm"
-            elif has_documents:
-                final_route = "hybrid"
-            else:
-                final_route = "web_search"
-            
-            state["enriched_question"] = enriched_question
-            state["route_decision"] = final_route
-            state["routing_confidence"] = 0.5
-            state["routing_reason"] = "Emergency fallback"
-            state["query_complexity"] = "unknown"
-            
-            return state
-    
+        embedding_service = get_embedding_service()
+        vector_store = VectorStoreService(
+            url=settings.qdrant_url,
+            api_key=settings.qdrant_api_key,
+            collection_name=f"session_{session_id}",
+            embedding_dim=embedding_service.get_dimension(),
+            auto_create=False
+        )
+        doc_count = vector_store.count()
+        has_documents = doc_count > 0
+        logger.info(f"Document check: session_{session_id} has {doc_count} documents")
     except Exception as e:
-        logger.error(f"Catastrophic routing failure: {e}")
-        
-        state["route_decision"] = "direct_llm"
-        state["routing_confidence"] = 0.3
-        state["routing_reason"] = f"Error: {str(e)}"
-        
-        return state
+        logger.warning(f"Document check failed: {e}")
+    
+    # Initialize advanced router
+    from ..services.advanced_router import get_advanced_router
+    
+    router = get_advanced_router(
+        embedding_service=embedding_service if has_documents else None,
+        has_documents=has_documents
+    )
+    
+    # Execute multi-tier routing
+    decision = router.route(
+        query=question,
+        conversation_context=history,
+        working_memory=working_memory,
+        has_documents=has_documents
+    )
+    
+    # Log decision with full context
+    logger.info(f"""
+🎯 ROUTING DECISION:
+   - Route: {decision.route.value}
+   - Confidence: {decision.confidence:.2%}
+   - Tier: {decision.tier} (Tier 0=fastest, Tier 3=most comprehensive)
+   - Latency: {decision.latency_ms:.1f}ms
+   - Reasoning: {decision.reasoning}
+    """)
+    
+    # Map RouteType to workflow route names
+    route_mapping = {
+        "working_memory": "direct_llm",  # Use direct_llm with working memory
+        "direct_llm": "direct_llm",
+        "vectorstore": "vectorstore",
+        "hybrid": "hybrid",
+        "web_search": "web_search",
+        "research": "research",
+        "hybrid_research": "hybrid_research",
+        "clarification": "clarification"
+    }
+    
+    route_decision = route_mapping.get(decision.route.value, "direct_llm")
+    
+    # Update state
+    return {
+        **state,
+        "route_decision": route_decision,
+        "routing_confidence": decision.confidence,
+        "routing_tier": decision.tier,
+        "routing_latency_ms": decision.latency_ms,
+        "routing_metadata": decision.metadata
+    }
+
+
+
+
 
 def handle_clarification_response(state: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -1592,76 +1516,179 @@ Be flexible in interpretation - users may not respond exactly as expected."""),
 
 def retrieve_documents(state: Dict[str, Any]) -> Dict[str, Any]:
     """
-    OPTIMIZED: Retrieve documents from vector store.
+    ENHANCED: Retrieve documents with query rewriting, hybrid search, and reranking.
     
-    Changes:
-    1. Uses cached embedding service
-    2. Reuses connection pool
-    3. Proper error handling
+    Pipeline:
+    1. Query rewriting (if enabled)
+    2. Hybrid search: BM25 + semantic retrieval
+    3. Reranking with cross-encoder
+    4. Return top-K documents
+    
+    Pattern: Advanced RAG pipeline (EMNLP 2024 best practices)
     """
-    logger.info("NODE: retrieve_documents")
+    logger.info("NODE: retrieve_documents (ENHANCED with reranking & hybrid search)")
+    
     question = state.get("enriched_question", state["question"])
+    original_question = state["question"]
     session_id = state["session_id"]
+    route_decision = state.get("route_decision", "vectorstore")
     
     try:
-        # Get embedding service (cached globally)
+        # ========== STEP 1: Query Rewriting ==========
+        rewritten_query = question
+        if settings.enable_query_rewriting and route_decision in ["vectorstore", "hybrid"]:
+            try:
+                query_rewriter = get_query_rewriter()
+                if query_rewriter.should_rewrite(question, route_decision):
+                    rewrite_result = query_rewriter.rewrite_query(question)
+                    rewritten_query = rewrite_result["rewritten_query"]
+                    logger.info(f"✅ Query rewritten: '{question}' → '{rewritten_query}'")
+                    state["rewritten_question"] = rewritten_query
+                    state["query_rewritten"] = True
+                else:
+                    logger.info("Query rewriting skipped (not needed)")
+                    state["query_rewritten"] = False
+            except Exception as e:
+                logger.warning(f"Query rewriting failed: {e}, using original")
+                state["query_rewritten"] = False
+        else:
+            state["query_rewritten"] = False
+        
+        # Use rewritten query for retrieval
+        retrieval_query = rewritten_query
+        
+        # ========== STEP 2: Get Embedding Service ==========
         embedding_service = get_embedding_service()
         
-        # Create vector store with pooled connection
+        # ========== STEP 3: Create Vector Store Connection ==========
         vector_store = VectorStoreService(
             url=settings.qdrant_url,
             api_key=settings.qdrant_api_key,
             collection_name=f"session_{session_id}",
             embedding_dim=embedding_service.get_dimension(),
-            auto_create=False  # Don't create - should already exist
+            auto_create=False
         )
         
-        # Generate query embedding
-        query_embedding = embedding_service.embed_text(question)
+        # ========== STEP 4: Semantic Search (always performed) ==========
+        logger.info(f"Performing semantic search for: '{retrieval_query}'")
+        query_embedding = embedding_service.embed_text(retrieval_query)
         
-        # Retrieve relevant documents
-        results = vector_store.similarity_search(
+        semantic_results = vector_store.similarity_search(
             query_embedding=query_embedding,
-            k=settings.retrieval_k
+            k=settings.retrieval_k  # Retrieve more for reranking (default: 20)
         )
         
-        # Convert to LangChain Document format
-        documents = [
+        # Convert to LangChain Documents
+        semantic_documents = [
             Document(
                 page_content=result["text"],
                 metadata={
                     **result["metadata"],
-                    "similarity_score": result.get("score", 0)
+                    "similarity_score": result.get("score", 0),
+                    "retrieval_method": "semantic"
                 }
             )
-            for result in results
+            for result in semantic_results
         ]
         
-        logger.info(f"Retrieved {len(documents)} documents")
+        logger.info(f"Semantic search retrieved {len(semantic_documents)} documents")
+        
+        # Store initial retrieval
+        state["initial_documents"] = semantic_documents
+        
+        # ========== STEP 5: Hybrid Search (BM25 + Semantic) ==========
+        final_documents = semantic_documents
+        
+        if settings.enable_hybrid_search:
+            try:
+                logger.info("Applying hybrid search (BM25 + semantic)")
+                
+                # Get all documents for BM25 indexing
+                all_docs_for_bm25 = vector_store.get_all_documents_for_session()
+                
+                if all_docs_for_bm25:
+                    # Convert to LangChain Document format for BM25
+                    bm25_corpus_docs = [
+                        Document(
+                            page_content=doc["text"],
+                            metadata=doc["metadata"]
+                        )
+                        for doc in all_docs_for_bm25
+                    ]
+                    
+                    # Build BM25 index
+                    hybrid_search = get_hybrid_search()
+                    hybrid_search.build_bm25_index(bm25_corpus_docs)
+                    
+                    # Perform hybrid search
+                    hybrid_documents = hybrid_search.hybrid_search(
+                        query=retrieval_query,
+                        semantic_results=semantic_documents,
+                        top_k=settings.retrieval_k
+                    )
+                    
+                    final_documents = hybrid_documents
+                    logger.info(f"✅ Hybrid search merged results: {len(final_documents)} documents")
+                else:
+                    logger.warning("No documents available for BM25 indexing")
+                    
+            except Exception as e:
+                logger.error(f"Hybrid search failed: {e}, using semantic only")
+                final_documents = semantic_documents
+        
+        # ========== STEP 6: Reranking ==========
+        if settings.enable_reranking and len(final_documents) > 0:
+            try:
+                logger.info(f"Reranking {len(final_documents)} documents...")
+                
+                reranker = get_reranker()
+                reranked_documents = reranker.rerank_documents(
+                    query=retrieval_query,
+                    documents=final_documents,
+                    top_k=settings.retrieval_after_rerank  # Default: 5
+                )
+                
+                logger.info(f"✅ Reranking complete: kept top {len(reranked_documents)} documents")
+                state["reranked_documents"] = reranked_documents
+                state["reranking_applied"] = True
+                final_documents = reranked_documents
+                
+            except Exception as e:
+                logger.error(f"Reranking failed: {e}, using original order")
+                state["reranking_applied"] = False
+        else:
+            state["reranking_applied"] = False
+            # If reranking disabled, just take top-K
+            final_documents = final_documents[:settings.retrieval_after_rerank]
+        
+        # ========== STEP 7: Return Results ==========
+        logger.info(f"✅ Document retrieval complete: {len(final_documents)} documents")
         
         return {
             **state,
-            "documents": documents
+            "documents": final_documents
         }
         
     except Exception as e:
-        logger.error(f"Document retrieval error: {e}")
+        logger.error(f"Document retrieval error: {e}", exc_info=True)
         return {
             **state,
             "documents": [],
-            "web_search_needed": True
+            "web_search_needed": True  # Fallback to web search
         }
 
 
 def grade_documents(state: Dict[str, Any]) -> Dict[str, Any]:
     """
-    FIXED: Grade document relevance with proper error handling
-    Pattern: CRAG (Corrective RAG) document grading
-    Source: Corrective RAG paper (2024)
-    """
-    logger.info("NODE: grade_documents")
+    FIXED: Grade document relevance with RELAXED fallback threshold.
     
-    question = state["question"]
+    Pattern: CRAG (Corrective RAG) document grading
+    Critical Fix: Changed fallback threshold from 50% to 20% (only fallback if <20% relevant)
+    Source: Corrective RAG paper (2024), EMNLP Best Practices
+    """
+    logger.info("NODE: grade_documents (FIXED with relaxed threshold)")
+    
+    question = state.get("rewritten_question", state.get("enriched_question", state["question"]))
     documents = state.get("documents", [])
     
     if not documents:
@@ -1670,15 +1697,16 @@ def grade_documents(state: Dict[str, Any]) -> Dict[str, Any]:
             **state,
             "documents": [],
             "total_retrieved": 0,
-            "web_search_needed": False
+            "relevant_count": 0,
+            "relevance_ratio": 0.0,
+            "web_search_needed": False  # CHANGED: Don't trigger fallback if no docs retrieved
         }
     
     # Initialize grading service
     groq_service = get_groq_service(settings.groq_api_key)
     
-    # FIXED: Proper prompt template for grading
-    grade_prompt = ChatPromptTemplate.from_template("""
-You are a grading expert assessing document relevance.
+    # Grading prompt
+    grade_prompt = ChatPromptTemplate.from_template("""You are a grading expert assessing document relevance.
 
 **Document Content:**
 {document}
@@ -1689,13 +1717,12 @@ You are a grading expert assessing document relevance.
 **Task:** Does this document contain information relevant to answering the question?
 
 Return ONLY:
-- "yes" if relevant
-- "no" if not relevant
+- "yes" if relevant (even partially relevant)
+- "no" if completely irrelevant
 
-Be strict - only mark as "yes" if the document actually helps answer the question.
-""")
+Be lenient - mark as "yes" if the document provides ANY useful information for the question.""")
     
-    llm = groq_service.get_llm(settings.routing_model, temperature=0)
+    llm = groq_service.get_llm(settings.grading_model, temperature=0)
     grader_chain = grade_prompt | llm | StrOutputParser()
     
     filtered_docs = []
@@ -1703,7 +1730,7 @@ Be strict - only mark as "yes" if the document actually helps answer the questio
     
     for i, doc in enumerate(documents, 1):
         try:
-            # Extract document content properly
+            # Extract document content
             if isinstance(doc, dict):
                 doc_content = doc.get("page_content", str(doc))
             elif hasattr(doc, "page_content"):
@@ -1713,7 +1740,7 @@ Be strict - only mark as "yes" if the document actually helps answer the questio
             
             # Grade the document
             grade_result = grader_chain.invoke({
-                "document": doc_content[:1000],  # Limit to first 1000 chars
+                "document": doc_content[:1000],  # First 1000 chars
                 "question": question
             })
             
@@ -1721,22 +1748,41 @@ Be strict - only mark as "yes" if the document actually helps answer the questio
             
             if "yes" in grade:
                 filtered_docs.append(doc)
-                logger.info(f"✓ Document {i} relevant")
+                logger.info(f"✓ Document {i}/{total_retrieved} relevant")
             else:
-                logger.info(f"✗ Document {i} not relevant")
-        
+                logger.info(f"✗ Document {i}/{total_retrieved} not relevant")
+                
         except Exception as e:
-            logger.warning(f"Grading error for doc {i}: {e}, keeping document by default")
+            logger.warning(f"Grading error for doc {i}: {e}, keeping by default")
             filtered_docs.append(doc)  # Default: keep if grading fails
     
-    relevance_ratio = len(filtered_docs) / total_retrieved if total_retrieved > 0 else 0.0
-    logger.info(f"Grading complete: {len(filtered_docs)}/{total_retrieved} documents relevant ({relevance_ratio:.0%})")
+    # Calculate metrics
+    relevant_count = len(filtered_docs)
+    relevance_ratio = relevant_count / total_retrieved if total_retrieved > 0 else 0.0
+    
+    # CRITICAL FIX: Relaxed fallback logic
+    # OLD: web_search_needed = relevance_ratio < 0.5 (too aggressive)
+    # NEW: web_search_needed = relevant_count == 0 (only if NO relevant docs)
+    web_search_needed = (
+        relevant_count == 0 or 
+        relevance_ratio < settings.relevance_threshold  # Default: 0.2 (20%)
+    )
+    
+    logger.info(f"""
+📊 Grading Results:
+   - Total retrieved: {total_retrieved}
+   - Relevant: {relevant_count} ({relevance_ratio:.0%})
+   - Threshold: {settings.relevance_threshold:.0%}
+   - Web search needed: {web_search_needed}
+    """)
     
     return {
         **state,
         "documents": filtered_docs,
         "total_retrieved": total_retrieved,
-        "web_search_needed": relevance_ratio < 0.5
+        "relevant_count": relevant_count,
+        "relevance_ratio": relevance_ratio,
+        "web_search_needed": web_search_needed
     }
 
 
@@ -1897,26 +1943,67 @@ Return ONLY the transformed query, nothing else."""),
 
 def generate(state: Dict[str, Any]) -> Dict[str, Any]:
     """
-    FIXED: Generate answer using retrieved documents and conversation context with working memory.
-    Pattern: Context-aware generation with citation
+    ENHANCED: Generate with document awareness, reverse repacking, and working memory.
+    
+    Features:
+    - Document registry context
+    - Filename-aware citations
+    - Reverse document repacking (most relevant last)
+    - Working memory integration
+    - Conversation history
+    
+    Pattern: Document-aware RAG (Google AI 2024) + Context repacking (EMNLP 2024)
     """
-    logger.info("NODE: generate (FIXED with working memory)")
+    logger.info("NODE: generate (ENHANCED with document awareness + reverse repacking)")
     
-    # Add capability context to state
+    # Add capability and document context
     state = add_capability_context_to_state(state)
+    state = add_document_context_to_state(state)  # NEW: Document awareness
     
-    question = state.get("enriched_question", state["question"])  # FIXED: Use enriched
+    question = state.get("enriched_question", state["question"])
     documents = state.get("documents", [])
     history = state.get("conversation_history", [])
-    working_memory = state.get("working_memory", {})  # FIXED: Extract working memory
+    working_memory = state.get("working_memory", {})
     capabilities = state.get("system_capabilities", "")
+    document_context = state.get("document_context", "")  # NEW
     
-    # Format documents
+    # ENHANCED: Format documents with FILENAME + reverse repacking
     if documents:
-        context = "\n\n".join([
-            f"[Source {i+1}: {doc.metadata.get('source', 'unknown')}]\n{doc.page_content}"
-            for i, doc in enumerate(documents[:5])
-        ])
+        # Reverse order so most relevant is LAST (LLM recency bias)
+        documents_for_generation = list(reversed(documents[:5]))
+        
+        logger.info(f"📄 Repacking {len(documents_for_generation)} documents (most relevant LAST)")
+        
+        # Group by filename for clear attribution
+        docs_by_file = {}
+        for doc in documents_for_generation:
+            filename = doc.metadata.get("filename", "Unknown Document")
+            if filename not in docs_by_file:
+                docs_by_file[filename] = []
+            docs_by_file[filename].append(doc)
+        
+        # Format with filename headers
+        context_parts = []
+        for filename, file_docs in docs_by_file.items():
+            context_parts.append(f"\n{'='*60}")
+            context_parts.append(f"📄 SOURCE: **{filename}**")
+            context_parts.append(f"{'='*60}\n")
+            
+            for doc in file_docs:
+                chunk_idx = doc.metadata.get("chunk_index", "?")
+                page = doc.metadata.get("page", "")
+                page_info = f" (Page {page})" if page else ""
+                
+                context_parts.append(f"[Chunk {chunk_idx}{page_info}]\n{doc.page_content}\n")
+        
+        context = "\n".join(context_parts)
+        
+        # Log repacking order
+        for i, doc in enumerate(documents_for_generation):
+            rerank_score = doc.metadata.get('rerank_score', 'N/A')
+            filename = doc.metadata.get('filename', 'Unknown')
+            position = "LEAST relevant" if i == 0 else ("MOST relevant" if i == len(documents_for_generation)-1 else "moderate")
+            logger.debug(f"  Position {i+1}: {filename} - {position} (score={rerank_score})")
     else:
         context = "No specific documents or sources available."
     
@@ -1928,31 +2015,43 @@ def generate(state: Dict[str, Any]) -> Dict[str, Any]:
             role = "User" if msg.get("role") == "user" else "Assistant"
             conversation_context += f"{role}: {msg.get('content', '')}\n"
     
-    # FIXED: Format working memory
+    # Format working memory
     memory_text = format_working_memory_context(working_memory)
     
     prompt = ChatPromptTemplate.from_messages([
         ("system", """{capabilities}
 
-You are a helpful AI assistant with access to multiple information sources and capabilities.
+{document_context}
 
 {memory_context}
 
-**CRITICAL RULES:**
-1. **Never say you cannot search the web** - you have web search capability
-2. **Never say you cannot access documents** - the system handles document retrieval
-3. **Never apologize for limitations you don't have**
-4. If the user's question references variables from working memory, USE THEM
-5. Always check working memory for computational queries
+**CRITICAL RULES FOR DOCUMENT REFERENCES:**
+1. **ALWAYS use actual filenames** when referencing documents (e.g., "analysis.pdf", "report_2024.docx")
+2. **NEVER use generic terms** like "the document", "the first file", "the file with 84 chunks"
+3. When multiple documents exist, specify which one: "According to **analysis.pdf**..."
+4. Use natural citations: "In **report.pdf** (page 3), the findings show..."
+
+**Examples of GOOD references:**
+✓ "According to **analysis.pdf**, the main findings are..."
+✓ "**report_2024.docx** indicates that..."
+✓ "Comparing **data.csv** with **results.xlsx**..."
+
+**Examples of BAD references (NEVER DO THIS):**
+✗ "The first file shows..."
+✗ "In the document with 84 chunks..."
+✗ "The PDF you uploaded..."
+✗ "According to the document..."
 
 **Response Guidelines:**
 - Synthesize information from retrieved documents and web search results
+- **Cite document filenames naturally** throughout your response
 - Use working memory for computational continuity
-- Cite sources naturally when using information from documents or web
 - Be concise but comprehensive
 - For computational queries, show your work step-by-step
-- If you don't have specific information, state what you found, not what you can't do"""),
-        ("human", """Context from Retrieved Documents:
+- If you don't have specific information, state what you found
+
+**IMPORTANT: Documents are ordered with MOST RELEVANT at the END** - pay attention to later chunks."""),
+        ("human", """Retrieved Context from Documents:
 {context}
 
 Conversation History:
@@ -1970,22 +2069,27 @@ Answer:""")
     try:
         generation = chain.invoke({
             "capabilities": capabilities,
-            "memory_context": memory_text,  # FIXED: Inject memory
+            "document_context": document_context,  # NEW: Document list
+            "memory_context": memory_text,
             "context": context,
             "conversation_history": conversation_context,
             "question": question
         })
         
-        # Extract sources for citation
+        # Extract sources with filenames
         sources = []
-        for doc in documents[:5]:
+        for doc in documents[:5]:  # Original top-5 order
+            filename = doc.metadata.get("filename", "Unknown")
             source_info = {
                 "url": doc.metadata.get("source", ""),
-                "title": doc.metadata.get("title", "Document"),
-                "type": doc.metadata.get("type", "document")
+                "title": filename,  # Use filename as title
+                "type": doc.metadata.get("type", "document"),
+                "filename": filename  # NEW: Explicit filename field
             }
             if source_info not in sources:
                 sources.append(source_info)
+        
+        logger.info(f"✅ Generated answer using {len(sources)} sources with document awareness")
         
         return {
             **state,
@@ -2000,6 +2104,52 @@ Answer:""")
             "generation": "I apologize, but I encountered an error generating the response. Please try again.",
             "sources": []
         }
+
+
+def add_document_context_to_state(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Add document registry context to state.
+    
+    Provides LLM with list of uploaded documents and their metadata.
+    Pattern: Document-aware dialog (Google AI 2024)
+    """
+    session_id = state.get("session_id")
+    if not session_id:
+        return state
+    
+    try:
+        from ..services.document_registry import get_document_registry
+        doc_registry = get_document_registry()
+        
+        # Get document summary
+        document_summary = doc_registry.get_document_summary(session_id)
+        session_docs = doc_registry.get_session_documents(session_id)
+        
+        # Format for LLM
+        if session_docs:
+            context = f"""
+📚 **DOCUMENTS AVAILABLE IN THIS SESSION:**
+{document_summary}
+
+**CRITICAL:** When referencing these documents, ALWAYS use their exact filenames.
+For example: "According to **{session_docs[0]['filename']}**..." NOT "According to the document..."
+"""
+            state["document_context"] = context
+            state["session_documents"] = session_docs
+            
+            logger.debug(f"✅ Added document context: {len(session_docs)} documents")
+        else:
+            state["document_context"] = ""
+            state["session_documents"] = []
+        
+    except Exception as e:
+        logger.warning(f"Failed to add document context: {e}")
+        state["document_context"] = ""
+        state["session_documents"] = []
+    
+    return state
+
+
 
 
 def direct_llm_generate(state: Dict[str, Any]) -> Dict[str, Any]:

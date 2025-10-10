@@ -138,6 +138,51 @@ class VectorStoreService:
         if auto_create:
             self._ensure_collection()
     
+
+
+    def create_payload_indexes(self):
+        """
+        Create Qdrant payload indexes for fast filtered retrieval.
+        
+        Indexes contextual metadata fields for instant access.
+        Cost: Free, one-time operation per collection.
+        """
+        try:
+            # Index document title
+            self.client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name="doc_title",
+                field_schema="keyword"
+            )
+            
+            # Index document type
+            self.client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name="doc_type",
+                field_schema="keyword"
+            )
+            
+            # Index chunk position
+            self.client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name="chunk_position",
+                field_schema="integer"
+            )
+            
+            # Index key entities
+            self.client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name="key_entities",
+                field_schema="keyword"
+            )
+            
+            logger.info("✅ Created payload indexes for fast context retrieval")
+            
+        except Exception as e:
+            logger.warning(f"Payload indexing failed (may already exist): {e}")
+
+
+
     def _ensure_collection(self):
         """
         OPTIMIZED: Create collection if it doesn't exist (with caching).
@@ -228,29 +273,67 @@ class VectorStoreService:
     def similarity_search(
         self,
         query_embedding: List[float],
-        k: int = 4,
-        score_threshold: Optional[float] = None
+        k: int = 5
     ) -> List[Dict]:
-        """Search for similar documents (unchanged)."""
-        search_result = self.client.search(
+        """
+        Enhanced similarity search with filename context.
+        """
+        results = self.client.search(
             collection_name=self.collection_name,
             query_vector=query_embedding,
             limit=k,
-            score_threshold=score_threshold
+            with_payload=True
         )
         
-        documents = []
-        for hit in search_result:
-            documents.append({
-                "id": hit.id,
+        formatted_results = []
+        for hit in results:
+            result = {
                 "text": hit.payload.get("text", ""),
+                "metadata": hit.payload,
                 "score": hit.score,
-                "metadata": {k: v for k, v in hit.payload.items() if k != "text"}
-            })
+                # NEW: Add filename for easy reference
+                "filename": hit.payload.get("filename", "Unknown"),
+                "source_display": f"{hit.payload.get('filename', 'Unknown')} (chunk {hit.payload.get('chunk_index', '?')})"
+            }
+            formatted_results.append(result)
         
-        logger.info(f"Retrieved {len(documents)} documents from vector store")
-        return documents
+        return formatted_results
     
+
+    def get_all_documents_for_session(self) -> List[Dict]:
+        """
+        Get all documents from this session's collection for BM25 indexing.
+        
+        Returns:
+            List of document dicts with text and metadata
+        """
+        try:
+            # Scroll through all points in collection
+            scroll_result = self.client.scroll(
+                collection_name=self.collection_name,
+                limit=10000,  # Max documents per session
+                with_payload=True,
+                with_vectors=False  # Don't need vectors for BM25
+            )
+            
+            documents = []
+            for point in scroll_result[0]:  # scroll returns (points, next_page_offset)
+                doc = {
+                    "id": point.id,
+                    "text": point.payload.get("text", ""),
+                    "metadata": {k: v for k, v in point.payload.items() if k != "text"}
+                }
+                documents.append(doc)
+            
+            logger.info(f"Retrieved {len(documents)} documents for BM25 indexing")
+            return documents
+            
+        except Exception as e:
+            logger.error(f"Failed to retrieve documents for BM25: {e}")
+            return []
+
+
+
     def delete_collection(self):
         """
         OPTIMIZED: Delete collection and invalidate cache.

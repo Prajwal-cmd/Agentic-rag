@@ -279,34 +279,54 @@ class MultiProviderResearchSearch:
             "year_filter": None
         }
     
+    
+
     def format_paper_for_context(self, paper: Dict[str, Any]) -> str:
-        """Format paper for LLM context (keep existing format)."""
+        """
+        Format paper for LLM context with None-safe handling.
+        
+        FIXED: Handle None values for abstract, tldr, and other fields.
+        """
         title = paper.get("title", "Unknown Title")
         authors = paper.get("authors", [])
-        author_names = ", ".join([a.get("name", "") for a in authors[:3]])
+        
+        # Safe author name extraction
+        author_names = ", ".join([a.get("name", "") for a in authors[:3] if isinstance(a, dict)])
         if len(authors) > 3:
             author_names += " et al."
+        if not author_names:
+            author_names = "Unknown Authors"
         
         year = paper.get("year", "N/A")
-        abstract = paper.get("abstract", "No abstract available")
+        
+        # FIXED: Safe abstract handling
+        abstract = paper.get("abstract") or "No abstract available"
+        if not isinstance(abstract, str):
+            abstract = "No abstract available"
+        
         citations = paper.get("citationCount", 0)
         venue = paper.get("venue", "Unknown Venue")
         source = paper.get("source", "unknown")
         
+        # FIXED: Safe TLDR handling
         tldr = paper.get("tldr", {})
-        tldr_text = tldr.get("text", "") if isinstance(tldr, dict) else ""
+        tldr_text = ""
+        if isinstance(tldr, dict):
+            tldr_text = tldr.get("text", "")
+        elif isinstance(tldr, str):
+            tldr_text = tldr
         
-        context = f"""
-**Research Paper: {title}**
-Authors: {author_names}
-Year: {year} | Venue: {venue} | Citations: {citations} | Source: {source}
-
-{f"Summary: {tldr_text}" if tldr_text else ""}
-
-Abstract: {abstract[:500]}{"..." if len(abstract) > 500 else ""}
-"""
+        # Build context string
+        context = f"""**Research Paper: {title}**
+    Authors: {author_names}
+    Year: {year} | Venue: {venue} | Citations: {citations} | Source: {source}
+    {f"Summary: {tldr_text}" if tldr_text else ""}
+    Abstract: {abstract[:500]}{"..." if len(abstract) > 500 else ""}
+    """
         
         return context.strip()
+
+
 
 # Global instance
 _research_service = None

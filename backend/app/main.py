@@ -22,6 +22,12 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from .services.literature_review import get_literature_review_service
 from .services.table_extractor import get_table_extractor
 from .services.math_handler import get_math_handler
+# ADD these lines after existing imports
+from .services.fast_contextual_embedder import get_fast_contextual_embedder
+from .services.query_rewriter import get_query_rewriter
+from .services.reranker import get_reranker
+from .services.hybrid_search import get_hybrid_search
+
 
 
 logger = setup_logger(__name__)
@@ -137,12 +143,13 @@ async def health_check():
     health_status["status"] = "healthy" if all_healthy else "degraded"
     return health_status
 
+
 @app.post("/upload", response_model=UploadResponse)
 async def upload_documents(
     files: List[UploadFile] = File(...),
     session_id: Optional[str] = Query(None)
 ):
-    """Upload and process documents."""
+    """Upload and process documents with contextual embedding."""
     logger.info(f"Document upload requested: {len(files)} files, session_id={session_id}")
     
     # Validate session_id is provided
@@ -174,19 +181,26 @@ async def upload_documents(
     logger.info(f"Total upload size: {total_size / (1024*1024):.2f} MB")
     
     # Process documents
-    doc_processor = get_document_processor(
-        settings.chunk_size,
-        settings.chunk_overlap
-    )
+    doc_processor = get_document_processor()
     
     all_chunks = []
+    all_full_texts = []
+    
     for file_info in file_data:
         try:
-            chunks = doc_processor.process_file(
+            # Process document and get chunks + full text
+            result = doc_processor.process_document(
                 BytesIO(file_info["content"]),
-                file_info["filename"]
+                file_info["filename"],
+                session_id
             )
-            all_chunks.extend(chunks)
+            
+            all_chunks.extend(result["chunks"])
+            all_full_texts.append({
+                "filename": file_info["filename"],
+                "full_text": result["full_text"]
+            })
+            
         except Exception as e:
             logger.error(f"Failed to process {file_info['filename']}: {e}")
             raise HTTPException(
@@ -194,10 +208,46 @@ async def upload_documents(
                 detail=f"Failed to process {file_info['filename']}: {str(e)}"
             )
     
+    logger.info(f"Processed {len(all_chunks)} chunks from {len(files)} files")
+    
+    # Apply contextual embedding if enabled
+    if settings.enable_contextual_embedding:
+        logger.info("Applying contextual embedding to chunks...")
+        from .services.contextual_embedder import get_contextual_embedder
+        
+        contextual_embedder = get_fast_contextual_embedder()
+        
+        # Process each file's chunks with its full text
+        contextualized_chunks = []
+        chunk_idx = 0
+        
+        for file_info in all_full_texts:
+            filename = file_info["filename"]
+            full_text = file_info["full_text"]
+            
+            # Find chunks belonging to this file
+            file_chunks = [
+                chunk for chunk in all_chunks 
+                if chunk["metadata"]["filename"] == filename
+            ]
+            
+            # Add context to these chunks
+            file_contextualized = contextual_embedder.generate_contexts_batch(
+                file_chunks,
+                full_text,
+                filename
+            )
+            
+            contextualized_chunks.extend(file_contextualized)
+        
+        all_chunks = contextualized_chunks
+        logger.info("✅ Contextual embedding applied")
+    
     # Generate embeddings
     embedding_service = get_embedding_service(settings.embedding_model)
     texts = [chunk["text"] for chunk in all_chunks]
     embeddings = embedding_service.embed_documents(texts)
+    
     logger.info(f"Generated {len(embeddings)} embeddings")
     
     # Store in vector database with session-specific collection
@@ -207,18 +257,21 @@ async def upload_documents(
         collection_name=f"session_{session_id}",
         embedding_dim=embedding_service.get_dimension()
     )
+    vectorstore.create_payload_indexes()
     
     metadatas = [chunk["metadata"] for chunk in all_chunks]
     vectorstore.add_documents(texts, embeddings, metadatas)
     
-    logger.info(f"Documents stored in session_{session_id}")
+    logger.info(f"✅ Documents stored in session_{session_id}")
     
     return UploadResponse(
-        message="Documents processed successfully",
+        message="Documents processed successfully with contextual embedding" if settings.enable_contextual_embedding else "Documents processed successfully",
         files_processed=len(files),
         chunks_created=len(all_chunks),
         session_id=session_id
     )
+
+
 
 @app.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
