@@ -93,7 +93,11 @@ class LiteratureReviewService:
             )
             
             if not papers:
-                return self._empty_review_result(research_question)
+                return self._empty_review_result(
+                    research_question,
+                    error_type="no_results",
+                    error_message="No papers found matching your query. Try rephrasing or broadening the search terms."
+                )
             
             # STEP 2: Convert to structured format
             structured_papers = [self._convert_to_research_paper(p) for p in papers]
@@ -128,14 +132,41 @@ class LiteratureReviewService:
                 "metadata": {
                     "total_papers": len(structured_papers),
                     "date_generated": datetime.now().isoformat(),
-                    "year_range": f"{min_year}-{datetime.now().year}"
+                    "year_range": f"{min_year}-{datetime.now().year}",
+                    "status": "success"
                 }
             }
         
         except Exception as e:
-            logger.error(f"Literature review failed: {e}")
-            return self._empty_review_result(research_question, error=str(e))
-    
+            error_message = str(e)
+            error_type = "unknown_error"
+            
+            # Detect specific error types for user-friendly messages
+            if "rate limit" in error_message.lower() or "429" in error_message:
+                error_type = "rate_limit"
+                error_message = "API rate limit exceeded. Please try again in a few minutes. The system will automatically use arXiv and CORE as fallback sources."
+            
+            elif "timeout" in error_message.lower():
+                error_type = "timeout"
+                error_message = "Request timed out. The academic databases are temporarily slow. Please try again in a moment."
+            
+            elif "connection" in error_message.lower() or "network" in error_message.lower():
+                error_type = "connection_error"
+                error_message = "Unable to connect to research databases. Please check your internet connection and try again."
+            
+            elif "not found" in error_message.lower():
+                error_type = "no_results"
+                error_message = f"No papers found for: {research_question}. Try rephrasing or broadening your search terms."
+            
+            logger.error(f"Literature review failed [{error_type}]: {error_message}")
+            return self._empty_review_result(
+                research_question,
+                error_type=error_type,
+                error_message=error_message
+            )
+
+
+
     def _convert_to_research_paper(self, raw_paper: Dict) -> ResearchPaper:
         """Convert raw API response to structured ResearchPaper."""
         authors = [a.get("name", "Unknown") for a in raw_paper.get("authors", [])]
@@ -374,17 +405,61 @@ ER  - """
             "source": paper.source
         }
     
-    def _empty_review_result(self, research_question: str, error: str = None) -> Dict:
-        """Return empty result structure."""
-        return {
+    def _empty_review_result(
+        self, 
+        research_question: str, 
+        error_type: str = None,
+        error_message: str = None
+    ) -> Dict:
+        """
+        Return empty result structure with enhanced error information.
+        
+        Args:
+            research_question: The original research question
+            error_type: Type of error (rate_limit, no_results, timeout, etc.)
+            error_message: User-friendly error message
+        
+        Returns:
+            Dict with empty results and error metadata
+        """
+        base_result = {
             "research_question": research_question,
             "papers": [],
             "synthesis": f"No papers found for: {research_question}",
             "key_themes": [],
             "research_gaps": [],
             "citation_export": {"bibtex": "", "ris": "", "count": 0},
-            "metadata": {"error": error} if error else {}
+            "metadata": {
+                "total_papers": 0,
+                "date_generated": datetime.now().isoformat(),
+                "status": "error" if error_type else "no_results"
+            }
         }
+        
+        # Add error details if present
+        if error_type:
+            base_result["metadata"]["error_type"] = error_type
+            base_result["metadata"]["error_message"] = error_message
+            
+            # Add helpful suggestions based on error type
+            if error_type == "rate_limit":
+                base_result["metadata"]["suggestion"] = "Wait 5-10 minutes before retrying. The system uses arXiv and CORE as fallback sources."
+                base_result["metadata"]["fallback_available"] = True
+                base_result["metadata"]["retry_after"] = "5 minutes"
+            
+            elif error_type == "no_results":
+                base_result["metadata"]["suggestion"] = "Try rephrasing your query, using different keywords, or broadening the search terms."
+            
+            elif error_type == "timeout":
+                base_result["metadata"]["suggestion"] = "The databases are slow right now. Try again in a moment."
+            
+            elif error_type == "connection_error":
+                base_result["metadata"]["suggestion"] = "Check your internet connection and ensure the backend server is running."
+            
+            else:
+                base_result["metadata"]["suggestion"] = "Please try again later or contact support if the issue persists."
+        
+        return base_result
 
 # Global instance
 _lit_review_service = None

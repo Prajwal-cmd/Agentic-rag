@@ -734,6 +734,12 @@ async def literature_review(
     Conduct automated literature review (Elicit-style).
     
     NEW FEATURE: Multi-paper synthesis with citation export
+    
+    Returns:
+        - 200: Successful review with papers
+        - 429: Rate limit exceeded (try again later)
+        - 503: Service unavailable (database connection issues)
+        - 500: Internal server error
     """
     logger.info(f"Literature review requested: {research_question}")
     
@@ -754,13 +760,85 @@ async def literature_review(
             extract_structured_data=extract_structured
         )
         
-        logger.info(f"✅ Literature review complete: {len(result['papers'])} papers")
+        # Check for errors in result metadata
+        metadata = result.get("metadata", {})
+        error_type = metadata.get("error_type")
         
+        if error_type:
+            # Rate limit error - return 429 status
+            if error_type == "rate_limit":
+                logger.warning(f"⚠️ Rate limit hit for: {research_question}")
+                raise HTTPException(
+                    status_code=429,
+                    detail={
+                        "error": metadata.get("error_message", "API rate limit exceeded"),
+                        "error_type": "rate_limit",
+                        "suggestion": metadata.get("suggestion", "Please wait a few minutes and try again"),
+                        "retry_after": metadata.get("retry_after", "5 minutes"),
+                        "fallback_available": metadata.get("fallback_available", True)
+                    }
+                )
+            
+            # Connection error - return 503 status
+            elif error_type == "connection_error":
+                logger.error(f"❌ Connection error for: {research_question}")
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        "error": metadata.get("error_message", "Unable to connect to research databases"),
+                        "error_type": "connection_error",
+                        "suggestion": metadata.get("suggestion", "Check your connection and try again")
+                    }
+                )
+            
+            # Timeout error - return 504 status
+            elif error_type == "timeout":
+                logger.warning(f"⏱️ Timeout for: {research_question}")
+                raise HTTPException(
+                    status_code=504,
+                    detail={
+                        "error": metadata.get("error_message", "Request timed out"),
+                        "error_type": "timeout",
+                        "suggestion": metadata.get("suggestion", "Try again in a moment")
+                    }
+                )
+            
+            # No results found - return 200 with empty results (not an error)
+            elif error_type == "no_results":
+                logger.info(f"ℹ️ No results for: {research_question}")
+                return result  # Return as-is, frontend will handle
+            
+            # Other errors - return 500 status
+            else:
+                logger.error(f"❌ Unknown error for: {research_question}")
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        "error": metadata.get("error_message", "An unexpected error occurred"),
+                        "error_type": error_type or "unknown_error",
+                        "suggestion": metadata.get("suggestion", "Please try again later")
+                    }
+                )
+        
+        # Success case
+        logger.info(f"✅ Literature review complete: {len(result.get('papers', []))} papers")
         return result
     
+    except HTTPException:
+        # Re-raise HTTP exceptions (already formatted)
+        raise
+    
     except Exception as e:
-        logger.error(f"Literature review error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        # Catch any unexpected errors
+        logger.error(f"❌ Unexpected literature review error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": f"An unexpected error occurred: {str(e)}",
+                "error_type": "unknown_error",
+                "suggestion": "Please try again later or contact support"
+            }
+        )
 
 
 @app.post("/research/export-citations")

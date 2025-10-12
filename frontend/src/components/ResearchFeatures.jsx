@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { InlineMath, BlockMath } from 'react-katex';
 import 'katex/dist/katex.min.css';
-import { BookOpen, Table2, Calculator, Download, Loader2, AlertCircle } from 'lucide-react';
+import { BookOpen, Table2, Calculator, Download, Loader2, AlertCircle, Clock, Search } from 'lucide-react';
 
 const ResearchFeatures = ({ sessionId }) => {
   const [activeTab, setActiveTab] = useState('literature');
@@ -45,9 +45,7 @@ const ResearchFeatures = ({ sessionId }) => {
         {children}
       </ol>
     ),
-    li: ({ children }) => (
-      <li className="leading-7">{children}</li>
-    ),
+    li: ({ children }) => <li className="leading-7">{children}</li>,
     code: ({ inline, children }) => {
       if (inline) {
         return (
@@ -77,6 +75,8 @@ const ResearchFeatures = ({ sessionId }) => {
   const handleLiteratureReview = async () => {
     setLoading(true);
     setError(null);
+    setResult(null);
+    
     try {
       const response = await fetch(
         `http://localhost:8000/research/literature-review?research_question=${encodeURIComponent(
@@ -84,11 +84,72 @@ const ResearchFeatures = ({ sessionId }) => {
         )}&max_papers=${maxPapers}&min_year=${minYear}`,
         { method: 'POST' }
       );
-      if (!response.ok) throw new Error('Literature review failed');
+
+      // Handle rate limit (429)
+      if (response.status === 429) {
+        const data = await response.json();
+        setError({
+          type: 'rate_limit',
+          message: data.detail?.error || 'API rate limit exceeded. Please try again in a few minutes.',
+          suggestion: data.detail?.suggestion || 'The system will automatically use arXiv and CORE as fallback sources.',
+          retryAfter: data.detail?.retry_after || '5 minutes',
+          fallbackAvailable: data.detail?.fallback_available || true,
+        });
+        return;
+      }
+
+      // Handle service unavailable (503)
+      if (response.status === 503) {
+        const data = await response.json();
+        setError({
+          type: 'connection_error',
+          message: data.detail?.error || 'Unable to connect to research databases.',
+          suggestion: data.detail?.suggestion || 'Please check your connection and try again.',
+        });
+        return;
+      }
+
+      // Handle timeout (504)
+      if (response.status === 504) {
+        const data = await response.json();
+        setError({
+          type: 'timeout',
+          message: data.detail?.error || 'Request timed out.',
+          suggestion: data.detail?.suggestion || 'The databases are slow right now. Try again in a moment.',
+        });
+        return;
+      }
+
+      // Handle other errors
+      if (!response.ok) {
+        const data = await response.json();
+        setError({
+          type: 'unknown_error',
+          message: data.detail?.error || 'Literature review failed',
+          suggestion: data.detail?.suggestion || 'Please try again later.',
+        });
+        return;
+      }
+
       const data = await response.json();
+
+      // Check if no results (from metadata)
+      if (data.papers.length === 0 || data.metadata?.error_type === 'no_results') {
+        setError({
+          type: 'no_results',
+          message: data.metadata?.error_message || `No papers found for: "${researchQuestion}"`,
+          suggestion: data.metadata?.suggestion || 'Try rephrasing your query or broadening the search terms.',
+        });
+        return;
+      }
+
       setResult(data);
     } catch (err) {
-      setError(err.message);
+      setError({
+        type: 'unknown_error',
+        message: err.message || 'Failed to conduct literature review',
+        suggestion: 'Please try again later or check your connection.',
+      });
     } finally {
       setLoading(false);
     }
@@ -96,7 +157,7 @@ const ResearchFeatures = ({ sessionId }) => {
 
   const handleTableExtraction = async () => {
     if (!pdfFile) {
-      setError('Please select a PDF file');
+      setError({ type: 'validation', message: 'Please select a PDF file', suggestion: '' });
       return;
     }
     setLoading(true);
@@ -112,7 +173,7 @@ const ResearchFeatures = ({ sessionId }) => {
       const data = await response.json();
       setResult(data);
     } catch (err) {
-      setError(err.message);
+      setError({ type: 'unknown_error', message: err.message, suggestion: 'Try again later' });
     } finally {
       setLoading(false);
     }
@@ -132,7 +193,7 @@ const ResearchFeatures = ({ sessionId }) => {
       const data = await response.json();
       setResult(data);
     } catch (err) {
-      setError(err.message);
+      setError({ type: 'unknown_error', message: err.message, suggestion: 'Try again later' });
     } finally {
       setLoading(false);
     }
@@ -208,13 +269,71 @@ const ResearchFeatures = ({ sessionId }) => {
         </button>
       </div>
 
-      {/* Error Display */}
+      {/* Enhanced Error Display with Different Types */}
       {error && (
-        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+        <div
+          className={`rounded-lg border p-4 flex items-start gap-3 ${
+            error.type === 'rate_limit'
+              ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800'
+              : error.type === 'no_results'
+              ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
+              : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+          }`}
+        >
+          <div className="flex-shrink-0 mt-0.5">
+            {error.type === 'rate_limit' ? (
+              <Clock className="w-5 h-5 text-yellow-600 dark:text-yellow-400" />
+            ) : error.type === 'no_results' ? (
+              <Search className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+            ) : (
+              <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400" />
+            )}
+          </div>
           <div className="flex-1">
-            <h3 className="font-semibold text-red-900 dark:text-red-100 mb-1">Error</h3>
-            <p className="text-sm text-red-700 dark:text-red-300">{error}</p>
+            <h3
+              className={`font-semibold mb-1 ${
+                error.type === 'rate_limit'
+                  ? 'text-yellow-900 dark:text-yellow-100'
+                  : error.type === 'no_results'
+                  ? 'text-blue-900 dark:text-blue-100'
+                  : 'text-red-900 dark:text-red-100'
+              }`}
+            >
+              {error.type === 'rate_limit' && 'Rate Limit Exceeded'}
+              {error.type === 'no_results' && 'No Results Found'}
+              {error.type === 'connection_error' && 'Connection Error'}
+              {error.type === 'timeout' && 'Request Timeout'}
+              {error.type === 'unknown_error' && 'Error'}
+              {error.type === 'validation' && 'Validation Error'}
+            </h3>
+            <p
+              className={`text-sm mb-2 ${
+                error.type === 'rate_limit'
+                  ? 'text-yellow-700 dark:text-yellow-300'
+                  : error.type === 'no_results'
+                  ? 'text-blue-700 dark:text-blue-300'
+                  : 'text-red-700 dark:text-red-300'
+              }`}
+            >
+              {error.message}
+            </p>
+            {error.suggestion && (
+              <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                💡 {error.suggestion}
+              </p>
+            )}
+            {error.retryAfter && error.type === 'rate_limit' && (
+              <p className="text-xs text-yellow-700 dark:text-yellow-300 mt-2 font-medium">
+                ⏱️ Retry after: {error.retryAfter}
+              </p>
+            )}
+            {error.type === 'rate_limit' && error.fallbackAvailable && (
+              <div className="mt-3 text-xs text-yellow-700 dark:text-yellow-300 bg-yellow-100 dark:bg-yellow-900/40 rounded px-2 py-1.5">
+                <strong>Note:</strong> The system automatically tries arXiv and CORE when Semantic
+                Scholar rate limits are reached. Most queries will still work with these fallback
+                sources.
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -314,7 +433,7 @@ const ResearchFeatures = ({ sessionId }) => {
                     📚 Export Citations
                   </h3>
                   <div className="flex gap-3">
-                    {['bibtex', 'ris', 'endnote'].map((format) => (
+                    {['bibtex', 'ris'].map((format) => (
                       <button
                         key={format}
                         onClick={() => downloadCitation(format)}
@@ -340,13 +459,36 @@ const ResearchFeatures = ({ sessionId }) => {
                         key={idx}
                         className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:shadow-md transition-shadow"
                       >
-                        <h4 className="font-semibold text-gray-900 dark:text-white mb-2">
-                          {paper.title}
-                        </h4>
+                        {/* Paper Title with Source Badge */}
+                        <div className="flex items-start justify-between gap-3 mb-2">
+                          <h4 className="font-semibold text-gray-900 dark:text-white flex-1">
+                            {paper.title}
+                          </h4>
+                          {paper.source && (
+                            <span
+                              className={`text-xs px-2 py-1 rounded-full font-semibold flex-shrink-0 ${
+                                paper.source === 'semantic_scholar'
+                                  ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300'
+                                  : paper.source === 'arxiv'
+                                  ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300'
+                                  : 'bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300'
+                              }`}
+                            >
+                              {paper.source === 'semantic_scholar'
+                                ? 'Semantic Scholar'
+                                : paper.source === 'arxiv'
+                                ? 'arXiv'
+                                : 'CORE'}
+                            </span>
+                          )}
+                        </div>
+
                         <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
-                          {paper.authors?.slice(0, 3).join(', ')} et al. ({paper.year}) ·{' '}
-                          {paper.citations} citations
+                          {paper.authors?.slice(0, 3).join(', ')}
+                          {paper.authors?.length > 3 && ' et al.'} ({paper.year}) · {paper.citations}{' '}
+                          citations
                         </p>
+
                         {paper.key_findings && paper.key_findings.length > 0 && (
                           <div className="mt-2">
                             <p className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -358,6 +500,17 @@ const ResearchFeatures = ({ sessionId }) => {
                               ))}
                             </ul>
                           </div>
+                        )}
+
+                        {paper.url && (
+                          <a
+                            href={paper.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-block mt-2 text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                          >
+                            View Paper →
+                          </a>
                         )}
                       </div>
                     ))}
