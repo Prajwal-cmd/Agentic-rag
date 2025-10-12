@@ -15,6 +15,7 @@ export const ChatProvider = ({ children }) => {
   const [sessionId, setSessionId] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [documentsUploaded, setDocumentsUploaded] = useState(false);
+  const [uploadedDocuments, setUploadedDocuments] = useState([]); // NEW: Track uploaded documents
   const [error, setError] = useState(null);
 
   // Generate session ID on mount
@@ -104,11 +105,25 @@ export const ChatProvider = ({ children }) => {
     setMessages([]);
   };
 
+  // NEW: Add uploaded document to list
+  const addUploadedDocument = (filename, chunksCount) => {
+    setUploadedDocuments((prev) => [
+      ...prev,
+      {
+        id: `${Date.now()}-${Math.random()}`,
+        filename,
+        chunksCount,
+        timestamp: new Date().toISOString(),
+      },
+    ]);
+  };
+
   const value = {
     messages,
     sessionId,
     isLoading,
     documentsUploaded,
+    uploadedDocuments, // NEW
     error,
     setIsLoading,
     setDocumentsUploaded,
@@ -119,6 +134,7 @@ export const ChatProvider = ({ children }) => {
     appendToStreamingMessage,
     finalizeStreamingMessage,
     clearMessages,
+    addUploadedDocument, // NEW
   };
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;

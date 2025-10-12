@@ -1,10 +1,12 @@
 import React, { useEffect, useRef } from 'react';
 import Message from './Message';
 import { useChatContext } from '../context/ChatContext';
+import { MessageSquare, Sparkles } from 'lucide-react';
 
 const MessageList = () => {
   const { messages } = useChatContext();
   const messagesEndRef = useRef(null);
+  const containerRef = useRef(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -15,25 +17,31 @@ const MessageList = () => {
   }, [messages]);
 
   // Filter out system messages for display
-  const displayMessages = messages.filter(msg => msg.role !== 'system');
+  const displayMessages = messages.filter((msg) => msg.role !== 'system');
 
   if (displayMessages.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center text-gray-500 bg-white">
-        <div className="text-center">
-          <p className="text-lg mb-2">No messages yet</p>
-          <p className="text-sm">Upload documents or start a conversation</p>
+      <div className="flex flex-col items-center justify-center h-full text-gray-400 dark:text-gray-500 p-8">
+        <div className="relative">
+          <MessageSquare className="w-20 h-20 mb-4 opacity-50" />
+          <Sparkles className="w-8 h-8 absolute -top-2 -right-2 text-blue-500 animate-pulse" />
         </div>
+        <h3 className="text-2xl font-bold mb-2 text-gray-700 dark:text-gray-300">
+          Start Your Conversation
+        </h3>
+        <p className="text-center text-sm max-w-md text-gray-500 dark:text-gray-400 leading-relaxed">
+          Upload documents to begin intelligent document analysis, or ask any question to explore research topics
+        </p>
       </div>
     );
   }
 
   return (
-    <div className="flex-1 overflow-y-auto px-4 py-6 bg-white">
-      {displayMessages.map(message => (
-        <Message key={message.id} message={message} />
+    <div ref={containerRef} className="py-6 px-4 space-y-1 min-h-full">
+      {displayMessages.map((msg) => (
+        <Message key={msg.id} message={msg} />
       ))}
-      <div ref={messagesEndRef} />
+      <div ref={messagesEndRef} className="h-4" />
     </div>
   );
 };

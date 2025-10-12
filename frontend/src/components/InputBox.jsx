@@ -1,17 +1,29 @@
-import React, { useState } from 'react';
-import { Send } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Send, Loader2, Paperclip } from 'lucide-react';
 import { useChatContext } from '../context/ChatContext';
 
 const InputBox = ({ onSendMessage }) => {
   const [input, setInput] = useState('');
   const { isLoading } = useChatContext();
+  const textareaRef = useRef(null);
   const maxLength = 2000;
+
+  // Auto-resize textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 150) + 'px';
+    }
+  }, [input]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
     if (input.trim() && !isLoading) {
       onSendMessage(input.trim());
       setInput('');
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+      }
     }
   };
 
@@ -23,41 +35,56 @@ const InputBox = ({ onSendMessage }) => {
   };
 
   return (
-    <div className="border-t border-gray-200 p-4 bg-white">
-      <form onSubmit={handleSubmit} className="flex items-end space-x-3">
-        <div className="flex-1">
+    <form onSubmit={handleSubmit} className="p-4 bg-gradient-to-r from-white to-gray-50 dark:from-gray-800 dark:to-gray-900">
+      <div className="flex gap-3 items-end max-w-5xl mx-auto">
+        <div className="flex-1 relative">
           <textarea
+            ref={textareaRef}
             value={input}
-            onChange={(e) => setInput(e.target.value.slice(0, maxLength))}
+            onChange={(e) => setInput(e.target.value)}
             onKeyPress={handleKeyPress}
-            placeholder="Type your message..."
+            placeholder="Ask anything about your documents..."
+            className="w-full px-4 py-3 pr-20 border-2 border-gray-300 dark:border-gray-600 rounded-2xl focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-transparent outline-none resize-none bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 shadow-lg transition-all"
+            rows={1}
+            maxLength={maxLength}
             disabled={isLoading}
-            rows={3}
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none disabled:bg-gray-100 disabled:text-gray-500"
+            style={{
+              minHeight: '56px',
+              maxHeight: '150px',
+            }}
           />
-          <div className="flex justify-between mt-2 px-1">
-            <span className="text-xs text-gray-500">
-              Shift + Enter for new line
-            </span>
-            <span className={`text-xs ${input.length > maxLength * 0.9 ? 'text-red-500 font-medium' : 'text-gray-500'}`}>
+          <div className="absolute bottom-3 right-3 flex items-center gap-2">
+            <span className="text-xs text-gray-400 dark:text-gray-500 font-medium">
               {input.length}/{maxLength}
             </span>
           </div>
         </div>
-        
+
         <button
           type="submit"
           disabled={!input.trim() || isLoading}
-          className="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center h-[52px] transition-colors"
+          className="px-6 py-3.5 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 disabled:from-gray-400 disabled:to-gray-400 text-white rounded-2xl font-semibold transition-all disabled:cursor-not-allowed shadow-lg hover:shadow-xl flex items-center gap-2 flex-shrink-0 h-[56px]"
         >
           {isLoading ? (
-            <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            <>
+              <Loader2 className="w-5 h-5 animate-spin" />
+              <span className="hidden sm:inline">Processing...</span>
+            </>
           ) : (
-            <Send size={20} />
+            <>
+              <Send className="w-5 h-5" />
+              <span className="hidden sm:inline">Send</span>
+            </>
           )}
         </button>
-      </form>
-    </div>
+      </div>
+
+      <div className="text-xs text-gray-500 dark:text-gray-400 text-center mt-2 space-x-4">
+        <span>Press <kbd className="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded font-mono">Enter</kbd> to send</span>
+        <span>•</span>
+        <span><kbd className="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded font-mono">Shift+Enter</kbd> for new line</span>
+      </div>
+    </form>
   );
 };
 

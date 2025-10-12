@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Upload, X, File, AlertCircle, CheckCircle } from 'lucide-react';
+import { Upload, X, File, AlertCircle, CheckCircle, FileCheck } from 'lucide-react';
 import { useChatContext } from '../context/ChatContext';
 import { chatAPI } from '../api/apiClient';
 import { formatFileSize, isValidFileType } from '../utils/formatters';
@@ -10,8 +10,8 @@ const DocumentUpload = () => {
   const [uploadError, setUploadError] = useState(null);
   const [uploadSuccess, setUploadSuccess] = useState(null);
   const fileInputRef = useRef(null);
-  
-  const { sessionId, setDocumentsUploaded, addMessage } = useChatContext();
+
+  const { sessionId, setDocumentsUploaded, addMessage, addUploadedDocument, uploadedDocuments } = useChatContext();
   const maxSize = 15 * 1024 * 1024; // 15MB
 
   const handleFileSelect = (e) => {
@@ -79,8 +79,14 @@ const DocumentUpload = () => {
       setUploadSuccess(successMsg);
       addMessage('system', `✓ ${successMsg}`);
       setDocumentsUploaded(true);
+
+      // NEW: Add each uploaded document to the list
+      selectedFiles.forEach((file) => {
+        addUploadedDocument(file.name, result.chunks_created);
+      });
+
       setSelectedFiles([]);
-      
+
       // Clear success message after 5 seconds
       setTimeout(() => setUploadSuccess(null), 5000);
     } catch (error) {
@@ -93,27 +99,14 @@ const DocumentUpload = () => {
   };
 
   return (
-    <div className="p-4">
-      <h2 className="text-lg font-semibold mb-4 text-gray-900">Upload Documents</h2>
-
-      {/* Drop zone */}
+    <div className="space-y-4">
+      {/* Upload Zone */}
       <div
-        className={`border-2 border-dashed rounded-lg p-6 mb-4 text-center cursor-pointer transition-colors ${
-          uploading 
-            ? 'border-gray-200 bg-gray-50 cursor-not-allowed' 
-            : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50'
-        }`}
-        onClick={() => !uploading && fileInputRef.current?.click()}
+        className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl p-6 text-center hover:border-blue-500 dark:hover:border-blue-400 transition-colors cursor-pointer bg-gray-50 dark:bg-gray-800/50"
         onDrop={handleDrop}
         onDragOver={handleDragOver}
+        onClick={() => fileInputRef.current?.click()}
       >
-        <Upload className={`mx-auto mb-2 ${uploading ? 'text-gray-300' : 'text-gray-400'}`} size={32} />
-        <p className="text-sm text-gray-600 mb-1 font-medium">
-          {uploading ? 'Uploading...' : 'Click or drag files here'}
-        </p>
-        <p className="text-xs text-gray-500">
-          PDF, DOCX, TXT (max 15MB total)
-        </p>
         <input
           ref={fileInputRef}
           type="file"
@@ -121,80 +114,118 @@ const DocumentUpload = () => {
           accept=".pdf,.docx,.txt"
           onChange={handleFileSelect}
           className="hidden"
-          disabled={uploading}
         />
+
+        <Upload className="w-12 h-12 mx-auto mb-3 text-gray-400 dark:text-gray-500" />
+        <p className="text-gray-700 dark:text-gray-300 font-medium mb-1">
+          {uploading ? 'Uploading...' : 'Click or drag files here'}
+        </p>
+        <p className="text-sm text-gray-500 dark:text-gray-400">
+          PDF, DOCX, TXT (max 15MB total)
+        </p>
       </div>
 
-      {/* Selected files list */}
+      {/* Selected Files */}
       {selectedFiles.length > 0 && (
-        <div className="mb-4">
-          <p className="text-sm font-medium mb-2 text-gray-700">
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+          <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
             Selected files ({selectedFiles.length}):
           </p>
-          <div className="space-y-2 max-h-48 overflow-y-auto">
+          <div className="space-y-2 mb-4">
             {selectedFiles.map((file, idx) => (
               <div
                 key={idx}
-                className="flex items-center justify-between p-2 bg-gray-50 rounded border border-gray-200"
+                className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-700/50 rounded-lg"
               >
                 <div className="flex items-center gap-2 flex-1 min-w-0">
-                  <File size={16} className="text-gray-500 flex-shrink-0" />
-                  <span className="text-sm truncate text-gray-700">{file.name}</span>
-                  <span className="text-xs text-gray-500 flex-shrink-0">
+                  <File className="w-4 h-4 text-blue-600 dark:text-blue-400 flex-shrink-0" />
+                  <span className="text-sm text-gray-700 dark:text-gray-300 truncate">
+                    {file.name}
+                  </span>
+                  <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">
                     {formatFileSize(file.size)}
                   </span>
                 </div>
                 <button
-                  onClick={() => removeFile(idx)}
-                  disabled={uploading}
-                  className="text-red-500 hover:text-red-700 flex-shrink-0 ml-2 disabled:opacity-50"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeFile(idx);
+                  }}
+                  className="p-1 hover:bg-gray-200 dark:hover:bg-gray-600 rounded flex-shrink-0"
                 >
-                  <X size={16} />
+                  <X className="w-4 h-4 text-gray-500 dark:text-gray-400" />
                 </button>
               </div>
             ))}
           </div>
 
           <button
-            onClick={handleUpload}
-            disabled={uploading || selectedFiles.length === 0}
-            className="w-full mt-3 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors font-medium"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleUpload();
+            }}
+            disabled={uploading}
+            className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white py-2 px-4 rounded-lg font-medium transition-colors disabled:cursor-not-allowed"
           >
-            {uploading ? (
-              <span className="flex items-center justify-center gap-2">
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                Uploading...
-              </span>
-            ) : (
-              'Upload Files'
-            )}
+            {uploading ? 'Uploading...' : 'Upload Files'}
           </button>
         </div>
       )}
 
-      {/* Success message */}
+      {/* Success Message */}
       {uploadSuccess && (
-        <div className="flex items-start gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700 mb-4">
-          <CheckCircle size={16} className="flex-shrink-0 mt-0.5" />
-          <p>{uploadSuccess}</p>
+        <div className="flex items-start gap-2 p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
+          <CheckCircle className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-green-700 dark:text-green-300">{uploadSuccess}</p>
         </div>
       )}
 
-      {/* Error display */}
+      {/* Error Message */}
       {uploadError && (
-        <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700 mb-4">
-          <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
-          <p>{uploadError}</p>
+        <div className="flex items-start gap-2 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+          <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-red-700 dark:text-red-300">{uploadError}</p>
+        </div>
+      )}
+
+      {/* NEW: Uploaded Documents List */}
+      {uploadedDocuments.length > 0 && (
+        <div className="bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/10 dark:to-purple-900/10 rounded-lg border border-blue-200 dark:border-blue-800 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <FileCheck className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+            <h3 className="font-semibold text-gray-800 dark:text-gray-200">
+              Uploaded Documents ({uploadedDocuments.length})
+            </h3>
+          </div>
+          <div className="space-y-2 max-h-40 overflow-y-auto">
+            {uploadedDocuments.map((doc) => (
+              <div
+                key={doc.id}
+                className="flex items-center justify-between p-2 bg-white/60 dark:bg-gray-800/60 rounded-lg backdrop-blur-sm"
+              >
+                <div className="flex items-center gap-2 flex-1 min-w-0">
+                  <div className="w-2 h-2 bg-green-500 rounded-full flex-shrink-0 animate-pulse"></div>
+                  <span className="text-sm text-gray-700 dark:text-gray-300 truncate font-medium">
+                    {doc.filename}
+                  </span>
+                </div>
+                <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">
+                  {doc.chunksCount} chunks
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
       {/* Info */}
-      <div className="mt-6 pt-4 border-t border-gray-200">
-        <p className="text-xs text-gray-600 mb-1">
-          <strong>Supported formats:</strong> PDF, DOCX, TXT
+      <div className="text-xs text-gray-500 dark:text-gray-400 space-y-1">
+        <p>
+          <strong className="text-gray-700 dark:text-gray-300">Supported formats:</strong> PDF,
+          DOCX, TXT
         </p>
-        <p className="text-xs text-gray-600">
-          <strong>Max size:</strong> 15MB total
+        <p>
+          <strong className="text-gray-700 dark:text-gray-300">Max size:</strong> 15MB total
         </p>
       </div>
     </div>

@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { InlineMath, BlockMath } from 'react-katex';
 import 'katex/dist/katex.min.css';
+import { BookOpen, Table2, Calculator, Download, Loader2, AlertCircle } from 'lucide-react';
 
 const ResearchFeatures = ({ sessionId }) => {
   const [activeTab, setActiveTab] = useState('literature');
@@ -21,18 +24,67 @@ const ResearchFeatures = ({ sessionId }) => {
   // Math Extraction State
   const [mathText, setMathText] = useState('');
 
+  // Markdown renderer for synthesis
+  const MarkdownComponents = {
+    p: ({ children }) => (
+      <p className="mb-3 leading-7 text-gray-800 dark:text-gray-100">{children}</p>
+    ),
+    strong: ({ children }) => (
+      <strong className="font-semibold text-gray-900 dark:text-white">{children}</strong>
+    ),
+    em: ({ children }) => (
+      <em className="italic text-gray-700 dark:text-gray-200">{children}</em>
+    ),
+    ul: ({ children }) => (
+      <ul className="list-disc list-inside space-y-1 my-2 ml-2 text-gray-800 dark:text-gray-100">
+        {children}
+      </ul>
+    ),
+    ol: ({ children }) => (
+      <ol className="list-decimal list-inside space-y-1 my-2 ml-2 text-gray-800 dark:text-gray-100">
+        {children}
+      </ol>
+    ),
+    li: ({ children }) => (
+      <li className="leading-7">{children}</li>
+    ),
+    code: ({ inline, children }) => {
+      if (inline) {
+        return (
+          <code className="px-1.5 py-0.5 bg-pink-50 dark:bg-pink-900/30 border border-pink-200 dark:border-pink-700 rounded text-sm font-mono text-pink-700 dark:text-pink-300">
+            {children}
+          </code>
+        );
+      }
+      return (
+        <pre className="bg-gray-900 dark:bg-black p-4 rounded-lg overflow-x-auto my-3 border border-gray-700">
+          <code className="text-sm font-mono text-green-400">{children}</code>
+        </pre>
+      );
+    },
+    a: ({ href, children }) => (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-blue-600 dark:text-blue-400 hover:underline font-medium"
+      >
+        {children}
+      </a>
+    ),
+  };
+
   const handleLiteratureReview = async () => {
     setLoading(true);
     setError(null);
-    
     try {
       const response = await fetch(
-        `http://localhost:8000/research/literature-review?research_question=${encodeURIComponent(researchQuestion)}&max_papers=${maxPapers}&min_year=${minYear}`,
+        `http://localhost:8000/research/literature-review?research_question=${encodeURIComponent(
+          researchQuestion
+        )}&max_papers=${maxPapers}&min_year=${minYear}`,
         { method: 'POST' }
       );
-      
       if (!response.ok) throw new Error('Literature review failed');
-      
       const data = await response.json();
       setResult(data);
     } catch (err) {
@@ -47,24 +99,16 @@ const ResearchFeatures = ({ sessionId }) => {
       setError('Please select a PDF file');
       return;
     }
-    
     setLoading(true);
     setError(null);
-    
     try {
       const formData = new FormData();
       formData.append('file', pdfFile);
-      
       const response = await fetch(
         `http://localhost:8000/research/extract-tables?pages=${pages}&output_format=${tableFormat}`,
-        {
-          method: 'POST',
-          body: formData
-        }
+        { method: 'POST', body: formData }
       );
-      
       if (!response.ok) throw new Error('Table extraction failed');
-      
       const data = await response.json();
       setResult(data);
     } catch (err) {
@@ -77,15 +121,14 @@ const ResearchFeatures = ({ sessionId }) => {
   const handleMathExtraction = async () => {
     setLoading(true);
     setError(null);
-    
     try {
       const response = await fetch(
-        `http://localhost:8000/research/extract-math?text=${encodeURIComponent(mathText)}&verify_latex=true&fix_errors=true`,
+        `http://localhost:8000/research/extract-math?text=${encodeURIComponent(
+          mathText
+        )}&verify_latex=true&fix_errors=true`,
         { method: 'POST' }
       );
-      
       if (!response.ok) throw new Error('Math extraction failed');
-      
       const data = await response.json();
       setResult(data);
     } catch (err) {
@@ -97,7 +140,6 @@ const ResearchFeatures = ({ sessionId }) => {
 
   const downloadCitation = (format) => {
     if (!result?.citation_export?.[format]) return;
-    
     const blob = new Blob([result.citation_export[format]], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -108,188 +150,220 @@ const ResearchFeatures = ({ sessionId }) => {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Tabs */}
-      <div className="border-b border-gray-200 mb-8">
-        <nav className="flex space-x-8">
-          <button
-            onClick={() => setActiveTab('literature')}
-            className={`pb-4 px-1 border-b-2 font-medium text-sm transition-colors ${
-              activeTab === 'literature'
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-          >
-            📚 Literature Review
-          </button>
-          <button
-            onClick={() => setActiveTab('tables')}
-            className={`pb-4 px-1 border-b-2 font-medium text-sm transition-colors ${
-              activeTab === 'tables'
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-          >
-            📊 Table Extraction
-          </button>
-          <button
-            onClick={() => setActiveTab('math')}
-            className={`pb-4 px-1 border-b-2 font-medium text-sm transition-colors ${
-              activeTab === 'math'
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-          >
-            ∑ Math Formulas
-          </button>
-        </nav>
+    <div className="max-w-7xl mx-auto p-6 space-y-6">
+      {/* Header */}
+      <div className="bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-2xl p-6 shadow-xl">
+        <h1 className="text-3xl font-bold mb-2">Research Tools</h1>
+        <p className="text-purple-100">
+          Advanced features for literature review, table extraction, and mathematical analysis
+        </p>
       </div>
 
-      {/* Error Banner */}
+      {/* Tabs */}
+      <div className="flex gap-2 border-b border-gray-200 dark:border-gray-700">
+        <button
+          onClick={() => {
+            setActiveTab('literature');
+            setResult(null);
+            setError(null);
+          }}
+          className={`flex items-center gap-2 px-4 py-3 font-medium border-b-2 transition-colors ${
+            activeTab === 'literature'
+              ? 'border-purple-600 text-purple-600 dark:text-purple-400'
+              : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+          }`}
+        >
+          <BookOpen className="w-5 h-5" />
+          Literature Review
+        </button>
+        <button
+          onClick={() => {
+            setActiveTab('tables');
+            setResult(null);
+            setError(null);
+          }}
+          className={`flex items-center gap-2 px-4 py-3 font-medium border-b-2 transition-colors ${
+            activeTab === 'tables'
+              ? 'border-purple-600 text-purple-600 dark:text-purple-400'
+              : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+          }`}
+        >
+          <Table2 className="w-5 h-5" />
+          Table Extraction
+        </button>
+        <button
+          onClick={() => {
+            setActiveTab('math');
+            setResult(null);
+            setError(null);
+          }}
+          className={`flex items-center gap-2 px-4 py-3 font-medium border-b-2 transition-colors ${
+            activeTab === 'math'
+              ? 'border-purple-600 text-purple-600 dark:text-purple-400'
+              : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+          }`}
+        >
+          <Calculator className="w-5 h-5" />
+          Math Extraction
+        </button>
+      </div>
+
+      {/* Error Display */}
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-6">
-          {error}
+        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <h3 className="font-semibold text-red-900 dark:text-red-100 mb-1">Error</h3>
+            <p className="text-sm text-red-700 dark:text-red-300">{error}</p>
+          </div>
         </div>
       )}
 
       {/* Literature Review Tab */}
       {activeTab === 'literature' && (
-        <div>
-          <h2 className="text-2xl font-semibold text-gray-900 mb-2">Automated Literature Review</h2>
-          <p className="text-gray-600 mb-6">
-            Conduct Elicit-style literature reviews with multi-paper synthesis
-          </p>
+        <div className="space-y-6">
+          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 shadow-lg">
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
+              Conduct Literature Review
+            </h2>
+            <p className="text-gray-600 dark:text-gray-300 mb-6">
+              Conduct Elicit-style literature reviews with multi-paper synthesis
+            </p>
 
-          <div className="space-y-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Research Question
-              </label>
-              <textarea
-                value={researchQuestion}
-                onChange={(e) => setResearchQuestion(e.target.value)}
-                placeholder="E.g., What are the latest advances in transformer architectures?"
-                rows={3}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Max Papers
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Research Question
                 </label>
                 <input
-                  type="number"
-                  value={maxPapers}
-                  onChange={(e) => setMaxPapers(parseInt(e.target.value))}
-                  min={1}
-                  max={20}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  type="text"
+                  value={researchQuestion}
+                  onChange={(e) => setResearchQuestion(e.target.value)}
+                  placeholder="What are the effects of climate change on biodiversity?"
+                  className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 dark:focus:ring-purple-400 outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
                 />
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Min Year
-                </label>
-                <input
-                  type="number"
-                  value={minYear}
-                  onChange={(e) => setMinYear(parseInt(e.target.value))}
-                  min={1900}
-                  max={new Date().getFullYear()}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Max Papers
+                  </label>
+                  <input
+                    type="number"
+                    value={maxPapers}
+                    onChange={(e) => setMaxPapers(parseInt(e.target.value))}
+                    min="1"
+                    max="50"
+                    className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 dark:focus:ring-purple-400 outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Min Year
+                  </label>
+                  <input
+                    type="number"
+                    value={minYear}
+                    onChange={(e) => setMinYear(parseInt(e.target.value))}
+                    min="1900"
+                    max={new Date().getFullYear()}
+                    className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 dark:focus:ring-purple-400 outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                  />
+                </div>
               </div>
-            </div>
 
-            <button
-              onClick={handleLiteratureReview}
-              disabled={loading || !researchQuestion}
-              className="px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
-            >
-              {loading ? 'Analyzing Papers...' : 'Start Literature Review'}
-            </button>
+              <button
+                onClick={handleLiteratureReview}
+                disabled={!researchQuestion.trim() || loading}
+                className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 disabled:from-gray-400 disabled:to-gray-400 text-white py-3 px-6 rounded-lg font-semibold transition-all disabled:cursor-not-allowed shadow-lg hover:shadow-xl flex items-center justify-center gap-2"
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Analyzing Papers...
+                  </>
+                ) : (
+                  'Start Review'
+                )}
+              </button>
+            </div>
           </div>
 
-          {/* Results */}
-          {result && result.synthesis && (
-            <div className="mt-8 space-y-8">
-              <div>
-                <h3 className="text-xl font-semibold text-gray-900 mb-4">Synthesis</h3>
-                <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 whitespace-pre-wrap">
-                  {result.synthesis}
+          {/* Results Display with Markdown Rendering */}
+          {result && (
+            <div className="space-y-6">
+              {/* Synthesis Section with Markdown */}
+              {result.synthesis && (
+                <div className="bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 rounded-xl border border-blue-200 dark:border-blue-800 p-6 shadow-lg">
+                  <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
+                    📊 Research Synthesis
+                  </h3>
+                  <div className="prose prose-sm max-w-none dark:prose-invert">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={MarkdownComponents}>
+                      {result.synthesis}
+                    </ReactMarkdown>
+                  </div>
                 </div>
-              </div>
+              )}
 
-              <div>
-                <h3 className="text-xl font-semibold text-gray-900 mb-4">
-                  Papers Analyzed ({result.papers?.length || 0})
-                </h3>
-                <div className="space-y-4">
-                  {result.papers?.map((paper, i) => (
-                    <div key={i} className="bg-white border border-gray-200 rounded-lg p-6 hover:border-blue-500 hover:shadow-md transition-all">
-                      <h4 className="text-lg font-semibold text-gray-900 mb-2">{paper.title}</h4>
-                      <p className="text-sm text-gray-600 mb-3">
-                        {paper.authors?.slice(0, 3).join(', ')} et al. ({paper.year}) · {paper.citations} citations
-                      </p>
-                      {paper.key_findings?.length > 0 && (
-                        <div className="mt-3 pt-3 border-t border-gray-100">
-                          <p className="text-sm font-medium text-gray-700 mb-2">Key Findings:</p>
-                          <ul className="list-disc list-inside space-y-1 text-sm text-gray-600">
-                            {paper.key_findings.map((finding, j) => (
-                              <li key={j}>{finding}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                      <a
-                        href={paper.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-block mt-3 text-blue-600 hover:text-blue-800 text-sm font-medium"
+              {/* Citation Export */}
+              {result.citation_export && (
+                <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 shadow-lg">
+                  <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">
+                    📚 Export Citations
+                  </h3>
+                  <div className="flex gap-3">
+                    {['bibtex', 'ris', 'endnote'].map((format) => (
+                      <button
+                        key={format}
+                        onClick={() => downloadCitation(format)}
+                        className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
                       >
-                        View Paper →
-                      </a>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {result.key_themes?.length > 0 && (
-                <div>
-                  <h3 className="text-xl font-semibold text-gray-900 mb-4">Key Themes</h3>
-                  <div className="flex flex-wrap gap-2">
-                    {result.key_themes.map((theme, i) => (
-                      <span
-                        key={i}
-                        className="px-4 py-2 bg-blue-50 text-blue-700 border border-blue-200 rounded-full text-sm font-medium"
-                      >
-                        {theme}
-                      </span>
+                        <Download className="w-4 h-4" />
+                        {format.toUpperCase()}
+                      </button>
                     ))}
                   </div>
                 </div>
               )}
 
-              <div>
-                <h3 className="text-xl font-semibold text-gray-900 mb-4">Export Citations</h3>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => downloadCitation('bibtex')}
-                    className="px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 hover:border-blue-500 transition-colors"
-                  >
-                    Download BibTeX
-                  </button>
-                  <button
-                    onClick={() => downloadCitation('ris')}
-                    className="px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 hover:border-blue-500 transition-colors"
-                  >
-                    Download RIS
-                  </button>
+              {/* Papers List */}
+              {result.papers && result.papers.length > 0 && (
+                <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 shadow-lg">
+                  <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">
+                    📖 Papers Analyzed ({result.papers.length})
+                  </h3>
+                  <div className="space-y-4">
+                    {result.papers.map((paper, idx) => (
+                      <div
+                        key={idx}
+                        className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:shadow-md transition-shadow"
+                      >
+                        <h4 className="font-semibold text-gray-900 dark:text-white mb-2">
+                          {paper.title}
+                        </h4>
+                        <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                          {paper.authors?.slice(0, 3).join(', ')} et al. ({paper.year}) ·{' '}
+                          {paper.citations} citations
+                        </p>
+                        {paper.key_findings && paper.key_findings.length > 0 && (
+                          <div className="mt-2">
+                            <p className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                              Key Findings:
+                            </p>
+                            <ul className="text-sm text-gray-600 dark:text-gray-400 space-y-1 ml-4 list-disc">
+                              {paper.key_findings.map((finding, fidx) => (
+                                <li key={fidx}>{finding}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           )}
         </div>
@@ -297,85 +371,94 @@ const ResearchFeatures = ({ sessionId }) => {
 
       {/* Table Extraction Tab */}
       {activeTab === 'tables' && (
-        <div>
-          <h2 className="text-2xl font-semibold text-gray-900 mb-2">PDF Table Extraction</h2>
-          <p className="text-gray-600 mb-6">
-            Extract tables from research papers and export to CSV/Excel
-          </p>
+        <div className="space-y-6">
+          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 shadow-lg">
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
+              Extract Tables from PDF
+            </h2>
+            <p className="text-gray-600 dark:text-gray-300 mb-6">
+              Extract tables from research papers and export to CSV/Excel
+            </p>
 
-          <div className="space-y-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Upload PDF
-              </label>
-              <input
-                type="file"
-                accept=".pdf"
-                onChange={(e) => setPdfFile(e.target.files[0])}
-                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-              />
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Pages
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  PDF File
                 </label>
                 <input
-                  type="text"
-                  value={pages}
-                  onChange={(e) => setPages(e.target.value)}
-                  placeholder="all, 1-3, or 1,3,5"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  type="file"
+                  accept=".pdf"
+                  onChange={(e) => setPdfFile(e.target.files[0])}
+                  className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 dark:focus:ring-purple-400 outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
                 />
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Format
-                </label>
-                <select
-                  value={tableFormat}
-                  onChange={(e) => setTableFormat(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                >
-                  <option value="csv">CSV</option>
-                  <option value="excel">Excel</option>
-                  <option value="markdown">Markdown</option>
-                </select>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Pages
+                  </label>
+                  <input
+                    type="text"
+                    value={pages}
+                    onChange={(e) => setPages(e.target.value)}
+                    placeholder="all or 1-5"
+                    className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 dark:focus:ring-purple-400 outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Format
+                  </label>
+                  <select
+                    value={tableFormat}
+                    onChange={(e) => setTableFormat(e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 dark:focus:ring-purple-400 outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                  >
+                    <option value="csv">CSV</option>
+                    <option value="json">JSON</option>
+                    <option value="markdown">Markdown</option>
+                  </select>
+                </div>
               </div>
-            </div>
 
-            <button
-              onClick={handleTableExtraction}
-              disabled={loading || !pdfFile}
-              className="px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
-            >
-              {loading ? 'Extracting...' : 'Extract Tables'}
-            </button>
+              <button
+                onClick={handleTableExtraction}
+                disabled={!pdfFile || loading}
+                className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 disabled:from-gray-400 disabled:to-gray-400 text-white py-3 px-6 rounded-lg font-semibold transition-all disabled:cursor-not-allowed shadow-lg hover:shadow-xl flex items-center justify-center gap-2"
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Extracting Tables...
+                  </>
+                ) : (
+                  'Extract Tables'
+                )}
+              </button>
+            </div>
           </div>
 
-          {result && result.format === 'markdown' && (
-            <div className="mt-8">
-              <h3 className="text-xl font-semibold text-gray-900 mb-4">Extracted Tables (Markdown)</h3>
-              <pre className="bg-gray-50 border border-gray-200 rounded-lg p-6 overflow-x-auto text-sm whitespace-pre-wrap max-h-96 overflow-y-auto">
-                {result.content}
-              </pre>
-            </div>
-          )}
-
-          {result && result.files && (
-            <div className="mt-8">
-              <h3 className="text-xl font-semibold text-gray-900 mb-4">
-                Extracted {result.files.length} Tables
+          {result && result.tables && (
+            <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 shadow-lg">
+              <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">
+                Extracted Tables ({result.tables.length})
               </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {result.files.map((file, i) => (
-                  <div key={i} className="bg-white border border-gray-200 rounded-lg p-4 hover:border-blue-500 hover:shadow-md transition-all">
-                    <p className="font-semibold text-gray-900">{file.filename}</p>
-                    <p className="text-sm text-gray-600 mt-2">
-                      Page {file.page}, {file.rows} rows × {file.columns} cols
+              <div className="space-y-4">
+                {result.tables.map((table, idx) => (
+                  <div
+                    key={idx}
+                    className="border border-gray-200 dark:border-gray-700 rounded-lg p-4"
+                  >
+                    <h4 className="font-semibold text-gray-900 dark:text-white mb-2">
+                      {table.filename}
+                    </h4>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">
+                      Page {table.page}, {table.rows} rows × {table.columns} cols
                     </p>
+                    <pre className="mt-2 bg-gray-100 dark:bg-gray-900 p-3 rounded text-sm overflow-x-auto">
+                      {table.content}
+                    </pre>
                   </div>
                 ))}
               </div>
@@ -386,68 +469,73 @@ const ResearchFeatures = ({ sessionId }) => {
 
       {/* Math Extraction Tab */}
       {activeTab === 'math' && (
-        <div>
-          <h2 className="text-2xl font-semibold text-gray-900 mb-2">Mathematical Formula Extraction</h2>
-          <p className="text-gray-600 mb-6">
-            Extract LaTeX formulas from text with automatic rendering
-          </p>
+        <div className="space-y-6">
+          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 shadow-lg">
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
+              Extract Mathematical Formulas
+            </h2>
+            <p className="text-gray-600 dark:text-gray-300 mb-6">
+              Extract LaTeX formulas from text with automatic rendering
+            </p>
 
-          <div className="space-y-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Text with Math
-              </label>
-              <textarea
-                value={mathText}
-                onChange={(e) => setMathText(e.target.value)}
-                placeholder="Paste text containing math (LaTeX or Unicode)..."
-                rows={6}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
-              />
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Text with Math
+                </label>
+                <textarea
+                  value={mathText}
+                  onChange={(e) => setMathText(e.target.value)}
+                  placeholder="The equation is $E = mc^2$ and..."
+                  rows={6}
+                  className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 dark:focus:ring-purple-400 outline-none resize-none bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 font-mono text-sm"
+                />
+              </div>
+
+              <button
+                onClick={handleMathExtraction}
+                disabled={!mathText.trim() || loading}
+                className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 disabled:from-gray-400 disabled:to-gray-400 text-white py-3 px-6 rounded-lg font-semibold transition-all disabled:cursor-not-allowed shadow-lg hover:shadow-xl flex items-center justify-center gap-2"
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Extracting Math...
+                  </>
+                ) : (
+                  'Extract Formulas'
+                )}
+              </button>
             </div>
-
-            <button
-              onClick={handleMathExtraction}
-              disabled={loading || !mathText}
-              className="px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
-            >
-              {loading ? 'Extracting...' : 'Extract & Render Math'}
-            </button>
           </div>
 
           {result && result.formulas && (
-            <div className="mt-8">
-              <h3 className="text-xl font-semibold text-gray-900 mb-2">
-                Found {result.total_count} Formulas
+            <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 shadow-lg">
+              <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">
+                Extracted Formulas ({result.inline_count} inline, {result.block_count} block)
               </h3>
-              <p className="text-gray-600 mb-4">
-                {result.inline_count} inline, {result.block_count} block
-              </p>
-
-              <div className="space-y-6">
-                {result.formulas.map((formula, i) => (
-                  <div key={i} className="bg-white border border-gray-200 rounded-lg p-6 hover:border-blue-500 transition-all">
-                    <div className="bg-gray-50 rounded-lg p-6 mb-4 text-center overflow-x-auto">
-                      {formula.type === 'inline' ? (
-                        <InlineMath math={formula.render_latex} />
-                      ) : (
-                        <BlockMath math={formula.render_latex} />
-                      )}
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <code className="flex-1 bg-gray-100 px-3 py-2 rounded text-sm font-mono text-gray-700">
-                        {formula.latex}
-                      </code>
-                      {formula.valid === false && (
-                        <span className="px-3 py-1 bg-red-50 text-red-700 rounded text-xs font-medium">
-                          ⚠️ Invalid LaTeX
-                        </span>
-                      )}
-                      {formula.fixed_latex && (
-                        <span className="px-3 py-1 bg-green-50 text-green-700 rounded text-xs font-medium">
-                          ✓ Auto-fixed
-                        </span>
-                      )}
+              <div className="space-y-4">
+                {result.formulas.map((formula, idx) => (
+                  <div
+                    key={idx}
+                    className="border border-gray-200 dark:border-gray-700 rounded-lg p-4"
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1">
+                        <pre className="bg-gray-100 dark:bg-gray-900 p-3 rounded text-sm mb-2 overflow-x-auto">
+                          {formula.latex}
+                        </pre>
+                        {formula.valid === false && (
+                          <span className="text-xs text-red-600 dark:text-red-400 font-medium">
+                            ⚠️ Invalid LaTeX
+                          </span>
+                        )}
+                        {formula.fixed_latex && (
+                          <span className="text-xs text-green-600 dark:text-green-400 font-medium ml-2">
+                            ✓ Auto-fixed
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 ))}
