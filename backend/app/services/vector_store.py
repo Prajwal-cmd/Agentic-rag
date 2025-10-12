@@ -389,6 +389,116 @@ class VectorStoreService:
                 "exists": False
             }
 
+    def get_all_session_collections(self) -> List[Dict]:
+        """
+        Get all session collections with their metadata.
+        
+        Returns:
+            List of dicts with collection names and creation timestamps
+        """
+        try:
+            collections = self.client.get_collections()
+            session_collections = []
+            
+            for collection in collections.collections:
+                if collection.name.startswith("session_"):
+                    try:
+                        # Get collection info to extract creation time
+                        info = self.client.get_collection(collection_name=collection.name)
+                        
+                        session_collections.append({
+                            "name": collection.name,
+                            "points_count": info.points_count if hasattr(info, 'points_count') else 0,
+                            "vectors_count": info.vectors_count if hasattr(info, 'vectors_count') else 0,
+                            "session_id": collection.name.replace("session_", "")
+                        })
+                    except Exception as e:
+                        logger.warning(f"Failed to get info for {collection.name}: {e}")
+                        continue
+            
+            logger.info(f"Found {len(session_collections)} session collections")
+            return session_collections
+            
+        except Exception as e:
+            logger.error(f"Error listing session collections: {e}")
+            return []
+
+    def delete_old_sessions_by_metadata(self, max_age_hours: int = 24) -> Dict:
+        """
+        Delete session collections older than specified hours using metadata.
+        Uses Qdrant's scroll API to check first point timestamp in each collection.
+        
+        Args:
+            max_age_hours: Delete collections older than this many hours
+            
+        Returns:
+            Dict with cleanup statistics
+        """
+        from datetime import datetime, timedelta
+        
+        try:
+            cutoff_time = datetime.now() - timedelta(hours=max_age_hours)
+            cutoff_timestamp = cutoff_time.timestamp()
+            
+            collections = self.get_all_session_collections()
+            
+            deleted_count = 0
+            skipped_count = 0
+            error_count = 0
+            
+            for collection_info in collections:
+                collection_name = collection_info["name"]
+                
+                try:
+                    # Get first point from collection to check timestamp
+                    scroll_result = self.client.scroll(
+                        collection_name=collection_name,
+                        limit=1,
+                        with_payload=True,
+                        with_vectors=False
+                    )
+                    
+                    points = scroll_result[0]
+                    
+                    if not points:
+                        # Empty collection - delete it
+                        logger.info(f"Deleting empty collection: {collection_name}")
+                        self.client.delete_collection(collection_name=collection_name)
+                        _connection_pool.invalidate_cache(self.client_key, collection_name)
+                        deleted_count += 1
+                        continue
+                    
+                    # Check if collection has upload_timestamp in payload
+                    first_point = points[0]
+                    upload_timestamp = first_point.payload.get("upload_timestamp")
+                    
+                    if upload_timestamp and upload_timestamp < cutoff_timestamp:
+                        logger.info(f"Deleting old collection: {collection_name} (age: {(datetime.now().timestamp() - upload_timestamp) / 3600:.1f}h)")
+                        self.client.delete_collection(collection_name=collection_name)
+                        _connection_pool.invalidate_cache(self.client_key, collection_name)
+                        deleted_count += 1
+                    else:
+                        skipped_count += 1
+                        
+                except Exception as e:
+                    logger.error(f"Error processing collection {collection_name}: {e}")
+                    error_count += 1
+                    continue
+            
+            result = {
+                "deleted": deleted_count,
+                "skipped": skipped_count,
+                "errors": error_count,
+                "total_checked": len(collections)
+            }
+            
+            logger.info(f"✅ Session cleanup complete: {result}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Session cleanup failed: {e}")
+            return {"deleted": 0, "skipped": 0, "errors": 1, "total_checked": 0}
+
 
 # Utility function for getting vector store with default settings
 @lru_cache(maxsize=128)

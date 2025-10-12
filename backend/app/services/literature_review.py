@@ -166,21 +166,19 @@ class LiteratureReviewService:
             prompt = ChatPromptTemplate.from_messages([
                 ("system", """You are an expert research analyst. Extract structured information from this research paper abstract.
 
-Return JSON with these fields:
-{
-  "key_findings": ["finding 1", "finding 2", "finding 3"],
-  "methodology": "Brief description of research method used",
-  "limitations": "Key limitations or gaps mentioned"
-}
+Return a JSON object with exactly three fields:
+- key_findings: an array of 2-4 key findings as strings
+- methodology: a brief string describing the research method used
+- limitations: a string describing key limitations or gaps mentioned
 
-Be concise and factual. If information is not in the abstract, use empty string/array."""),
+Be concise and factual. If information is not in the abstract, use empty string or empty array."""),
                 ("human", """Paper: {title}
 Authors: {authors}
 Year: {year}
 
 Abstract: {abstract}
 
-Extract structured information:""")
+Extract structured information in JSON format.""")
             ])
             
             llm = self.llm_service.get_llm("llama-3.1-8b-instant", temperature=0.1)
@@ -311,7 +309,6 @@ Provide a comprehensive synthesis (400-600 words):""")
         except:
             return []
     
-    
     def _generate_citation_exports(
         self,
         papers: List[ResearchPaper]
@@ -339,19 +336,19 @@ Provide a comprehensive synthesis (400-600 words):""")
     journal={{{paper.venue}}},
     url={{{paper.url}}},
     note={{Citations: {paper.citations}}}
-    }}"""
+}}"""
             bibtex_entries.append(bibtex)
             
             # RIS format (RefMan)
             author_lines = '\nAU  - '.join(paper.authors[:5])
             ris = f"""TY  - JOUR
-    TI  - {paper.title}
-    AU  - {author_lines}
-    PY  - {paper.year}
-    JO  - {paper.venue}
-    UR  - {paper.url}
-    N1  - Citations: {paper.citations}
-    ER  - """
+TI  - {paper.title}
+AU  - {author_lines}
+PY  - {paper.year}
+JO  - {paper.venue}
+UR  - {paper.url}
+N1  - Citations: {paper.citations}
+ER  - """
             ris_entries.append(ris)
         
         return {
@@ -359,9 +356,6 @@ Provide a comprehensive synthesis (400-600 words):""")
             "ris": "\n\n".join(ris_entries),
             "count": len(papers)
         }
-
-
-
 
     def _paper_to_dict(self, paper: ResearchPaper) -> Dict:
         """Convert ResearchPaper to dictionary."""

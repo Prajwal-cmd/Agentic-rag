@@ -51,6 +51,63 @@ app.add_middleware(
 workflow = None
 summarizer = None
 
+# NEW: Track last cleanup time to avoid frequent cleanups
+last_cleanup_time = None
+cleanup_interval_hours = 1  # Only cleanup once per hour
+
+
+def should_run_cleanup() -> bool:
+    """
+    Check if enough time has passed since last cleanup.
+    Optimization: Avoid running cleanup on every upload.
+    """
+    global last_cleanup_time
+    from datetime import datetime, timedelta
+    
+    if last_cleanup_time is None:
+        return True
+    
+    time_since_cleanup = datetime.now() - last_cleanup_time
+    return time_since_cleanup > timedelta(hours=cleanup_interval_hours)
+
+def run_session_cleanup():
+    """
+    Run lazy session cleanup with optimization.
+    Only runs if cleanup interval has passed.
+    """
+    global last_cleanup_time
+    from datetime import datetime
+    
+    if not should_run_cleanup():
+        logger.info(f"⏭️ Skipping cleanup (last run: {(datetime.now() - last_cleanup_time).total_seconds() / 60:.1f}m ago)")
+        return {"skipped": True}
+    
+    try:
+        logger.info("🧹 Starting lazy session cleanup...")
+        
+        # Create a temporary vector store instance for cleanup operations
+        cleanup_store = VectorStoreService(
+            url=settings.qdrant_url,
+            api_key=settings.qdrant_api_key,
+            collection_name="temp_cleanup",  # Dummy name, won't be created
+            embedding_dim=384,
+            auto_create=False  # Don't create collection
+        )
+        
+        # Delete sessions older than 24 hours
+        result = cleanup_store.delete_old_sessions_by_metadata(max_age_hours=24)
+        
+        # Update last cleanup time
+        last_cleanup_time = datetime.now()
+        
+        logger.info(f"✅ Cleanup complete: {result}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Session cleanup error: {e}")
+        return {"error": str(e)}
+
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on application startup."""
@@ -151,6 +208,11 @@ async def upload_documents(
 ):
     """Upload and process documents with contextual embedding."""
     logger.info(f"Document upload requested: {len(files)} files, session_id={session_id}")
+    
+    # NEW: Run lazy cleanup BEFORE processing upload
+    cleanup_result = run_session_cleanup()
+    if not cleanup_result.get("skipped"):
+        logger.info(f"Cleanup result: {cleanup_result}")
     
     # Validate session_id is provided
     if not session_id:
@@ -259,7 +321,15 @@ async def upload_documents(
     )
     vectorstore.create_payload_indexes()
     
+    # NEW: Add upload timestamp to ALL chunks for cleanup tracking
+    from datetime import datetime
+    upload_timestamp = datetime.now().timestamp()
+    
     metadatas = [chunk["metadata"] for chunk in all_chunks]
+    # Inject timestamp into each metadata dict
+    for metadata in metadatas:
+        metadata["upload_timestamp"] = upload_timestamp
+    
     vectorstore.add_documents(texts, embeddings, metadatas)
     
     logger.info(f"✅ Documents stored in session_{session_id}")
